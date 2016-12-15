@@ -3,14 +3,14 @@
 
 # TODO
 # listening TCP-socket for change of status -> remove periodic status update
-# light functions: dimup, dimdown, toogle, color temperature, timer,
-#				   schedules, color flow
+# light functions: toogle, timer, schedules, color flow,
 # scenes
 # software bridge (UDP): autocreate devices (ID), search for devices,
 #						 listening for changes (eg. IP)
 
 # versions
 # 00 start
+# 01 dimup, dimdown
 
 # verbose level
 # 0: quit
@@ -33,7 +33,6 @@ use JSON::XS;
 sub
 YeeLight_Initialize
 {
-
 	my ($hash) = @_;
 	  
 	require "$attr{global}{modpath}/FHEM/DevIo.pm";
@@ -85,6 +84,7 @@ YeeLight_Bridge_GetID
 	my ($hash)	= @_;
 	my $curID	= 1;
 	$curID		= $data{YeeLightBridge}{msgID} if ($data{YeeLightBridge}{msgID});
+	$data{YeeLightBridge}{msgID} = 1 if ($data{YeeLightBridge}{msgID} >= 9999);
 	$data{YeeLightBridge}{msgID} = 1 if (!$data{YeeLightBridge}{msgID});
 	$data{YeeLightBridge}{msgID}++;
 	readingsSingleUpdate($hash,"msgID",$curID,1);
@@ -147,7 +147,10 @@ YeeLight_Set
 	$list .= "hsv ";
 	$list .= "rgb ";
 	$list .= "brightness ";
+	$list .= "dimup ";
+	$list .= "dimdown ";
 	$list .= "color ";
+	$list .= "colortemperature ";
 	$list .= "statusrequest:noArg ";
 
 	if (lc $cmd eq 'on'
@@ -155,12 +158,15 @@ YeeLight_Set
 		|| lc $cmd eq 'hsv'
 		|| lc $cmd eq 'rgb'
 		|| lc $cmd eq 'brightness'
+		|| lc $cmd eq 'dimup'
+		|| lc $cmd eq 'dimdown'
 		|| lc $cmd eq 'color'
+		|| lc $cmd eq 'colortemperature'
 		|| lc $cmd eq 'statusrequest')
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
 		
-		return YeeLight_SelectSetCmd($hash, $cmd, @val) if (@val ) || (lc $cmd eq 'statusrequest') || (lc $cmd eq "on") || (lc $cmd eq "off");
+		return YeeLight_SelectSetCmd($hash, $cmd, @val) if (@val ) || (lc $cmd eq 'statusrequest') || (lc $cmd eq "on") || (lc $cmd eq "off") || (lc $cmd eq "dimup") || (lc $cmd eq "dimdown");
 	}
 
 	return "Unknown argument $cmd, bearword as argument or wrong parameter(s), choose one of $list";
@@ -345,17 +351,70 @@ YeeLight_SelectSetCmd
 		}
 	}
 	
-	# TODO
-	#elsif ($cmd eq 'dimup')
-	#{
-	#}
+	elsif ($cmd eq 'dimup' || $cmd eq 'dimdown')
+	{
+		if ($cnt == 0)
+		{
+			my $method = '"set_adjust"';
+			my $params = "[";
+			$params .= '"increase"' if ($cmd eq "dimup");
+			$params .= '"decrease"' if ($cmd eq "dimdown");
+			$params .= ',"bright"';
+			
+			my $ret = YeeLight_SendCmd($hash,$method,$params,$cmd,0);
+			
+			if ($ret eq "ok")
+			{
+				YeeLight_StatusRequest($hash);
+			}
+			else
+			{
+				return $ret if (defined $ret);
+				return "Unknown error.";
+			}
+		}
+		elsif ($cnt == 2 || $cnt == 1)
+		{
+			YeeLight_StatusRequest($hash);
+		
+			my $oldBright = $hash->{READINGS}{brightness}{VAL};
+			$args[0] = $oldBright + $args[0] if ($cmd eq "dimup");
+			$args[0] = $oldBright - $args[0] if ($cmd eq "dimdown");
+			$args[0] = 1 if ($args[0] < 1);
+			$args[0] = 100 if ($args[0] > 100);
+		
+			YeeLight_SelectSetCmd($hash,'brightness',@args);
+		}
+	}
 	
-	#elsif ($cmd eq 'dimdown')
-	#{
-	#}
+	elsif ($cmd eq "colortemperature")
+	{
+		return "usage: set $name $cmd [COLORTEMPERATUR]" if !(($cnt == 1) || ($cnt == 2)) || ($args[0] !~ /^\d?.?\d+$/);
+		return "choose color temperature between 1700 and 6500" if ($args[0] < 1700) || ($args[0] > 6500);
+		
+		my $method	= '"set_ct_abx"';
+		my $ct 		= int($args[0]);
+		my $params	= '['.$ct;
+		
+		my $ret		= YeeLight_SendCmd($hash,$method,$params,$cmd,$args[1]);
+		
+		if ($ret eq "ok")
+		{
+			readingsBeginUpdate($hash);
+			readingsBulkUpdateIfChanged($hash,"colortemperature",$ct);
+			readingsEndUpdate($hash,1);
+		}
+		else
+		{
+			return $ret if (defined $ret);
+			return "Unknown error.";
+		}
+		
+	}
+	
+	# TODO
 	
 	#toogle
-	#color temperature
 	#timer
 	#schedules
 	#color flow
@@ -368,11 +427,19 @@ YeeLight_SendCmd
 	my $name = $hash->{NAME};
 	my $effect	= "sudden";
 	my $ramp	= 0;
-	my $error = undef;
-	($ramp,$effect,$error) = YeeLight_Ramp($hash,$cmd,$arg) if (defined $arg);
-	return $error if (defined $error);
 	
-	$params	.= ',"'.$effect.'",'.$ramp.']';
+	if (defined $arg && $arg == 0)
+	{
+		$params .= "]";
+	}
+	else
+	{
+		my $error = undef;
+		($ramp,$effect,$error) = YeeLight_Ramp($hash,$cmd,$arg) if (defined $arg);
+		return $error if (defined $error);
+		$params	.= ',"'.$effect.'",'.$ramp.']';
+	}
+	
 	my $msgID	= YeeLight_Bridge_GetID($hash);
 	my $send	= qq({"id":$msgID, "method":$method, "params":$params}\r\n);
 		
@@ -440,7 +507,7 @@ YeeLight_StatusRequest
 		readingsBeginUpdate($hash);
 		readingsBulkUpdateIfChanged($hash,"power",$answer->{'result'}->[0]);
 		readingsBulkUpdateIfChanged($hash,"brightness",$answer->{'result'}->[1]);
-		readingsBulkUpdateIfChanged($hash,"colortemperatur",$answer->{'result'}->[2]);
+		readingsBulkUpdateIfChanged($hash,"colortemperature",$answer->{'result'}->[2]);
 		readingsBulkUpdateIfChanged($hash,"RGB_Blue",$b);
 		readingsBulkUpdateIfChanged($hash,"RGB_Green",$g);
 		readingsBulkUpdateIfChanged($hash,"RGB_Red",$r);
