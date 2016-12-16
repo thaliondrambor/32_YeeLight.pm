@@ -3,16 +3,18 @@
 
 # TODO
 # listening TCP-socket for change of status -> remove periodic status update
-# light functions: timer, schedules, color flow,
+# light functions: timer, schedules, color flow
 # scenes
 # software bridge (UDP): autocreate devices (ID), search for devices,
 #						 listening for changes (eg. IP)
 # help
-# attributes: standard ramp, adjust brightness level
+# attributes: adjust brightness level
 
 # versions
 # 00 start
 # 01 added dimup, dimdown, colortemperature, toggle
+# 02 changed colortemperature to ct, added hex input for rgb,
+#    added attribute defaultramp, added hue and sat
 
 # verbose level
 # 0: quit
@@ -39,11 +41,13 @@ YeeLight_Initialize
 	  
 	require "$attr{global}{modpath}/FHEM/DevIo.pm";
 
-	$hash->{DefFn}        = "YeeLight_Define";
-	$hash->{UndefFn}      = "YeeLight_Undef";
-	$hash->{ShutdownFn}   = "YeeLight_Shutdown";
-	$hash->{SetFn}        = "YeeLight_Set";
-	$hash->{AttrList}     = ""
+	$hash->{DefFn}			= "YeeLight_Define";
+	$hash->{UndefFn}		= "YeeLight_Undef";
+	$hash->{ShutdownFn}		= "YeeLight_Shutdown";
+	$hash->{SetFn}			= "YeeLight_Set";
+	$hash->{AttrFn}			= "YeeLight_Attr";
+	$hash->{AttrList}		= 
+		"defaultramp"
 		." $readingFnAttributes";
 
 	return undef;
@@ -89,7 +93,7 @@ YeeLight_Bridge_GetID
 	$data{YeeLightBridge}{msgID} = 1 if (!$data{YeeLightBridge}{msgID});
 	$data{YeeLightBridge}{msgID} = 1 if ($data{YeeLightBridge}{msgID} >= 9999);
 	$data{YeeLightBridge}{msgID}++;
-	readingsSingleUpdate($hash,"msgID",$curID,1);
+	#readingsSingleUpdate($hash,"msgID",$curID,1);
 	return $curID;
 }
 
@@ -161,24 +165,28 @@ YeeLight_Set
 	$list .= "off ";
 	$list .= "toggle ";
 	$list .= "hsv ";
+	$list .= "hue ";
+	$list .= "sat ";
 	$list .= "rgb ";
 	$list .= "brightness ";
 	$list .= "dimup ";
 	$list .= "dimdown ";
 	$list .= "color ";
-	$list .= "colortemperature ";
+	$list .= "ct ";
 	$list .= "statusrequest:noArg ";
 
 	if (lc $cmd eq 'on'
 		|| lc $cmd eq 'off'
 		|| lc $cmd eq 'toggle'
 		|| lc $cmd eq 'hsv'
+		|| lc $cmd eq 'hue'
+		|| lc $cmd eq 'sat'
 		|| lc $cmd eq 'rgb'
 		|| lc $cmd eq 'brightness'
 		|| lc $cmd eq 'dimup'
 		|| lc $cmd eq 'dimdown'
 		|| lc $cmd eq 'color'
-		|| lc $cmd eq 'colortemperature'
+		|| lc $cmd eq 'ct'
 		|| lc $cmd eq 'statusrequest')
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
@@ -207,16 +215,15 @@ YeeLight_SelectSetCmd
 	}
   
 	my $cnt = @args;
-	my $cmdSet = $hash->{helper}->{COMMANDSET}; 
-	return "unknown command ($cmd): choose one of ".join(", ", $cmdSet) if ($cmd eq "?"); 
-
 
 	if (lc $cmd eq 'on' || $cmd eq 'off')
 	{
-		my $params	= '["'.$cmd.'"';
-		my $method	= '"set_power"';
+		my $sCmd;
+		$sCmd->{'method'}		= "set_power";							# method:set_power
+		$sCmd->{'params'}->[0]	= $cmd;									# on/off
+		$sCmd->{'params'}->[2]	= $args[0] if ($args[0]);				# ramp time
 		
-		YeeLight_SendCmd($hash,$method,$params,$cmd,$args[0]);
+		YeeLight_SendCmd($hash,$sCmd,$cmd,2);
 	}
 	
 	elsif (lc $cmd eq "hsv")
@@ -224,12 +231,46 @@ YeeLight_SelectSetCmd
 		return "usage: set $name $cmd [hue] [saturation]" if !(($cnt == 2) || ($cnt == 3)) || ($args[0] !~ /^\d?.?\d+$/) || ($args[1] !~ /^\d?.?\d+$/);
 		return "choose hue between 0 and 359" if ($args[0] < 0) || ($args[0] > 359);
 		return "choose saturation between 0 and 100" if ($args[1] < 0) || ($args[1] > 100);
-		my $hue			= int($args[0]);
-		my $saturation	= int($args[1]);
-		my $method	= '"set_hsv"';
-		my $params	= '['.$hue.','.$saturation;
 		
-		YeeLight_SendCmd($hash,$method,$params,$cmd,$args[2]);	
+		my $sCmd;
+		$sCmd->{'method'}		= "set_hsv";							# method:set_hsv
+		$sCmd->{'params'}->[0]	= int($args[0]);						# hue
+		$sCmd->{'params'}->[1]	= int($args[1]);						# saturation
+		$sCmd->{'params'}->[3]	= $args[2] if ($args[2]);				# ramp time
+		
+		YeeLight_SendCmd($hash,$sCmd,$cmd,3);
+	}
+	
+	elsif (lc $cmd eq "hue")
+	{
+		return "usage: set $name $cmd [hue]" if !(($cnt == 1) || ($cnt == 2)) || ($args[0] !~ /^\d?.?\d+$/);
+		return "choose hue between 0 and 359" if ($args[0] < 0) || ($args[0] > 359);
+		
+		YeeLight_StatusRequest($hash);
+		
+		my $sCmd;
+		$sCmd->{'method'}		= "set_hsv";							# method:set_hsv
+		$sCmd->{'params'}->[0]	= int($args[0]);						# hue
+		$sCmd->{'params'}->[1]	= $hash->{READINGS}{saturation}{VAL} + 0;# saturation
+		$sCmd->{'params'}->[3]	= $args[1] if ($args[1]);				# ramp time
+		
+		YeeLight_SendCmd($hash,$sCmd,$cmd,3);
+	}
+	
+	elsif (lc $cmd eq "sat")
+	{
+		return "usage: set $name $cmd [saturation]" if !(($cnt == 1) || ($cnt == 2)) || ($args[0] !~ /^\d?.?\d+$/);
+		return "choose hue between 0 and 100" if ($args[0] < 0) || ($args[0] > 359);
+		
+		YeeLight_StatusRequest($hash);
+		
+		my $sCmd;
+		$sCmd->{'method'}		= "set_hsv";							# method:set_hsv
+		$sCmd->{'params'}->[0]	= $hash->{READINGS}{hue}{VAL} + 0;		# hue
+		$sCmd->{'params'}->[1]	= int($args[0]);						# saturation
+		$sCmd->{'params'}->[3]	= $args[1] if ($args[1]);				# ramp time
+		
+		YeeLight_SendCmd($hash,$sCmd,$cmd,3);
 	}
 	
 	elsif (lc $cmd eq "statusrequest")
@@ -239,28 +280,47 @@ YeeLight_SelectSetCmd
 	
 	elsif (lc $cmd eq "rgb")
 	{
-		return "usage: set $name $cmd [red] [green] [blue]" if !(($cnt == 3) || ($cnt == 4)) || ($args[0] !~ /^\d?.?\d+$/) || ($args[1] !~ /^\d?.?\d+$/) || ($args[2] !~ /^\d?.?\d+$/);
-		return "choose color (red, green, blue) between 0 and 255" if ($args[0] < 0) || ($args[0] > 255) || ($args[1] < 0) || ($args[1] > 255) || ($args[2] < 0) || ($args[2] > 255);
-		my $r	= int($args[0]);
-		my $g	= int($args[1]);
-		my $b	= int($args[2]);
-		my $rgb	= ($r * 256 * 256) + ($g * 256) + $b;
-		$rgb	= (255 * 256 * 256) + (255 * 256) + 255 if ($rgb == 0);
+		my $sCmd;
+		my $rgb		= undef;
+
+		if (defined($args[0]) && $args[0] =~ /^[0-9A-Fa-f]{6}$/)
+		{
+			$rgb	= "FFFFFF" if ($rgb eq "000000");
+			$rgb	= hex($args[0]);
+			$sCmd->{'params'}->[2] = $args[1] if ($args[1]);			# ramp time
+		}
+		elsif((($cnt == 3) || ($cnt == 4)) && ($args[0] =~ /^\d?.?\d+$/) && ($args[1] =~ /^\d?.?\d+$/) && ($args[2] =~ /^\d?.?\d+$/))
+		{
+			return "choose color (red, green, blue) between 0 and 255" if ($args[0] < 0) || ($args[0] > 255) || ($args[1] < 0) || ($args[1] > 255) || ($args[2] < 0) || ($args[2] > 255);
+			my $r	= int($args[0]);
+			my $g	= int($args[1]);
+			my $b	= int($args[2]);
+			$rgb	= ($r * 256 * 256) + ($g * 256) + $b;
+			$rgb	= (255 * 256 * 256) + (255 * 256) + 255 if ($rgb == 0);
+			$sCmd->{'params'}->[2] = $args[3] if ($args[3]);			# ramp time
+		}
+		else
+		{
+			return "usage: set $name $cmd [red] [green] [blue] or set $name $cmd RRGGBB";
+		}
 		
-		my $method	= '"set_rgb"';
-		my $params	= '['.$rgb;
-		YeeLight_SendCmd($hash,$method,$params,$cmd,$args[3]);
+		$sCmd->{'method'}		= "set_rgb";							# method:set_rgb
+		$sCmd->{'params'}->[0]	= $rgb;									# rgb
+
+		YeeLight_SendCmd($hash,$sCmd,$cmd,2);
 	}
 
 	elsif (lc $cmd eq "brightness")
 	{
 		return "usage: set $name $cmd [brightness]" if !(($cnt == 1) || ($cnt == 2)) || ($args[0] !~ /^\d?.?\d+$/);
 		return "choose brightness between 1 and 100" if ($args[0] < 1) || ($args[0] > 100);
-		my $bright	= int($args[0]);
-		my $method	= '"set_bright"';
-		my $params	= '['.$bright;
 		
-		YeeLight_SendCmd($hash,$method,$params,$cmd,$args[1]);
+		my $sCmd;
+		$sCmd->{'method'}		= "set_bright";							# method:set_bright
+		$sCmd->{'params'}->[0]	= int($args[0]);						# brightness
+		$sCmd->{'params'}->[2]	= $args[1] if ($args[1]);				# ramp time
+		
+		YeeLight_SendCmd($hash,$sCmd,$cmd,2);
 	}
 	
 	elsif (lc $cmd eq "color")
@@ -289,8 +349,6 @@ YeeLight_SelectSetCmd
 			"limett"		=> "63,252,0",
 			"brown"			=> "216,108,54",	"braun"			=> "216,108,54",
 		);
-		
-		my $method	= '"set_rgb"';
 
 		if (!$color{lc($args[0])})
 		{
@@ -300,32 +358,26 @@ YeeLight_SelectSetCmd
 		}
 		my @rgb = split(/\,/,$color{lc($args[0])});
 		my $setColor = ($rgb[0] * 256 *256) + ($rgb[1] * 256) + $rgb[2];
-		my $params	= '['.$setColor;
+				
+		my $sCmd;
+		$sCmd->{'method'}		= "set_rgb";							# method:set_hsv
+		$sCmd->{'params'}->[0]	= $setColor;							# color in rgb
+		$sCmd->{'params'}->[2]	= $args[1] if ($args[1]);				# ramp time
 		
-		YeeLight_SendCmd($hash,$method,$params,$cmd,$args[1]);
+		YeeLight_SendCmd($hash,$sCmd,$cmd,2);
 	}
 	
 	elsif ($cmd eq 'dimup' || $cmd eq 'dimdown')
 	{
 		if ($cnt == 0)
 		{
-			my $method = '"set_adjust"';
-			my $params = "[";
-			$params .= '"increase"' if ($cmd eq "dimup");
-			$params .= '"decrease"' if ($cmd eq "dimdown");
-			$params .= ',"bright"';
+			my $sCmd;
+			$sCmd->{'method'}		= "set_adjust";						# method:set_adjust
+			$sCmd->{'params'}->[0]	= "increase" if ($cmd eq "dimup");	# dimup
+			$sCmd->{'params'}->[0]	= "decrease" if ($cmd eq "dimdown");# dimdown
+			$sCmd->{'params'}->[1]	= "bright";							# brightness
 			
-			my $ret = YeeLight_SendCmd($hash,$method,$params,$cmd,0);
-			
-			if ($ret eq "ok")
-			{
-				YeeLight_StatusRequest($hash);
-			}
-			else
-			{
-				return $ret if (defined $ret);
-				return "Unknown error.";
-			}
+			YeeLight_SendCmd($hash,$sCmd,$cmd,2);
 		}
 		elsif ($cnt == 2 || $cnt == 1)
 		{
@@ -339,18 +391,23 @@ YeeLight_SelectSetCmd
 		
 			YeeLight_SelectSetCmd($hash,'brightness',@args);
 		}
+		else
+		{
+			return "usage: set $name $cmd [dimup/dimdown] <VALUE>";
+		}
 	}
 	
-	elsif ($cmd eq "colortemperature")
+	elsif ($cmd eq "ct")
 	{
 		return "usage: set $name $cmd [COLORTEMPERATUR]" if !(($cnt == 1) || ($cnt == 2)) || ($args[0] !~ /^\d?.?\d+$/);
 		return "choose color temperature between 1700 and 6500" if ($args[0] < 1700) || ($args[0] > 6500);
 		
-		my $method	= '"set_ct_abx"';
-		my $ct 		= int($args[0]);
-		my $params	= '['.$ct;
+		my $sCmd;
+		$sCmd->{'method'}		= "set_ct_abx";							# method:set_ct_abx
+		$sCmd->{'params'}->[0]	= int($args[0]);						# color temperature
+		$sCmd->{'params'}->[2]	= $args[1] if ($args[1]);				# ramp time
 		
-		YeeLight_SendCmd($hash,$method,$params,$cmd,$args[1]);
+		YeeLight_SendCmd($hash,$sCmd,$cmd,2);
 	}
 	
 	elsif ($cmd eq "toggle")
@@ -371,25 +428,35 @@ YeeLight_SelectSetCmd
 sub
 YeeLight_SendCmd
 {
-	my ($hash,$method,$params,$cmd,$arg) = @_;
-	my $name = $hash->{NAME};
-	my $effect	= "sudden";
-	my $ramp	= 0;
+	my ($hash,$sCmd,$cmd,$rCnt) = @_;
+	my $name	= $hash->{NAME};
+	my $error	= undef;
 	
-	if (defined $arg && $arg == 0)
+	if (defined($sCmd->{'params'}->[$rCnt]))
 	{
-		$params .= "]";
-	}
-	else
-	{
-		my $error = undef;
-		($ramp,$effect,$error) = YeeLight_Ramp($hash,$cmd,$arg) if (defined $arg);
+		$error = "usage: set $name $cmd [milliseconds]" if $sCmd->{'params'}->[$rCnt] !~ /^\d?.?\d+$/;
+		$error = "minimum for milliseconds is 30" if $sCmd->{'params'}->[$rCnt] < 30;
+		Log3 $name, 4, "$name: $error" if (defined $error);
 		return $error if (defined $error);
-		$params	.= ',"'.$effect.'",'.$ramp.']';
+		$sCmd->{'params'}->[$rCnt - 1] = "smooth";						# flow
+		$sCmd->{'params'}->[$rCnt] += 0;								# force ramp time to be int
+	}
+	elsif (defined($attr{$name}{defaultramp}))
+	{
+		$sCmd->{'params'}->[$rCnt - 1] = "smooth";						# flow
+		$sCmd->{'params'}->[$rCnt] = $attr{$name}{defaultramp} + 0;		# force default ramp time to be int
+	}
+	elsif ($sCmd->{'method'} eq "set_ct_abx")
+	{
+
+		$sCmd->{'params'}->[$rCnt - 1] = "sudden";						# no flow
+		$sCmd->{'params'}->[$rCnt] = 0;									# no flow
 	}
 	
-	my $msgID	= YeeLight_Bridge_GetID($hash);
-	my $send	= qq({"id":$msgID, "method":$method, "params":$params}\r\n);
+	$sCmd->{'id'}	= YeeLight_Bridge_GetID($hash);
+	my $send		= encode_json($sCmd);
+	$send			.= "\r\n";
+	$send			= qq($send);
 		
 	DevIo_OpenDev($hash, 0,, sub(){ 
 		my ($hash, $err) = @_;
@@ -400,7 +467,7 @@ YeeLight_SendCmd
 	return "$name: Error: $ret" if ($ret =~ /error/) || (!$ret);
 	my $answer	= decode_json($ret);
 	
-	if (($answer) && ($answer->{'id'} eq $msgID) && ($answer->{'result'}->[0] eq "ok"))
+	if (($answer) && ($answer->{'id'} eq $sCmd->{'id'}) && ($answer->{'result'}->[0] eq "ok"))
 	{
 		YeeLight_StatusRequest($hash);
 		return undef;
@@ -409,20 +476,6 @@ YeeLight_SendCmd
 	{
 		return "Unknown error.";
 	}
-}
-
-sub
-YeeLight_Ramp
-{
-	my ($hash,$cmd,$arg) = @_;
-	my $name = $hash->{NAME};
-	my $error = undef;
-	if ($arg !~ /^\d?.?\d+$/)	{$error = "usage: set $name $cmd [milliseconds]";}
-	elsif ($arg < 30)			{$error = "minimum for milliseconds is 30";}
-	Log3 $name, 4, "$name: $error" if (defined $error);
-	my $ramp = $arg;
-	my $effect = "smooth";
-	return ($ramp, $effect, $error);
 }
 
 sub
@@ -443,6 +496,7 @@ YeeLight_StatusRequest
 	
 	my $answer		= decode_json($ret);
 	my $rgb			= $answer->{'result'}->[3];
+	my $hexrgb		= sprintf("%X",$rgb);
 	my $b			= $rgb % 256;
 	my $g			= (($rgb - $b) / 256) % 256;
 	my $r			= ($rgb - $b - ($g * 256)) / (256 * 256);
@@ -463,6 +517,7 @@ YeeLight_StatusRequest
 		readingsBulkUpdateIfChanged($hash,"power",$answer->{'result'}->[0]);
 		readingsBulkUpdateIfChanged($hash,"brightness",$answer->{'result'}->[1]);
 		readingsBulkUpdateIfChanged($hash,"colortemperature",$answer->{'result'}->[2]);
+		readingsBulkUpdateIfChanged($hash,"RGB",$hexrgb);
 		readingsBulkUpdateIfChanged($hash,"RGB_Blue",$b);
 		readingsBulkUpdateIfChanged($hash,"RGB_Green",$g);
 		readingsBulkUpdateIfChanged($hash,"RGB_Red",$r);
@@ -489,6 +544,15 @@ YeeLight_Get
 sub
 YeeLight_Attr
 {
+	my ($cmd,$name,$attrName,$attrVal) = @_;
+	
+	if ($cmd eq "set")
+	{
+		if ($attrName eq "defaultramp")
+		{
+			return "Invalid parameter for $attrName. $attrName must be a number and more than 30." if ($attrVal !~ /^\d?.?\d+$/) && ($attrVal < 30);
+		}
+	}
 	return undef;
 }
 
