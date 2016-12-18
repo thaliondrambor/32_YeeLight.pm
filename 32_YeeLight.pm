@@ -417,7 +417,7 @@ YeeLight_SelectSetCmd
 			$sCmd->{'params'}->[0]	= "decrease" if ($cmd eq "dimdown");# dimdown
 			$sCmd->{'params'}->[1]	= "bright";							# brightness
 			
-			YeeLight_SendCmd($hash,$sCmd,$cmd,2);
+			YeeLight_SendCmd($hash,$sCmd,$cmd);
 		}
 		elsif ($cnt == 2 || $cnt == 1)
 		{		
@@ -565,7 +565,13 @@ YeeLight_SendCmd
 	my $name	= $hash->{NAME};
 	my $error	= undef;
 	
-	if (lc $cmd eq "name" || lc $cmd eq "default" || lc $cmd eq "start_cf" || lc $cmd eq "stop_cf") {}
+	if (lc $cmd eq "name"
+		|| lc $cmd eq "default"
+		|| lc $cmd eq "start_cf"
+		|| lc $cmd eq "stop_cf"
+		|| lc $cmd eq "dimdown"
+		|| lc $cmd eq "dimup")
+	{}
 	elsif (defined($sCmd->{'params'}->[$rCnt]))
 	{
 		$error = "usage: set $name $cmd [milliseconds]" if $sCmd->{'params'}->[$rCnt] !~ /^\d?.?\d+$/;
@@ -594,7 +600,7 @@ YeeLight_SendCmd
 	Add_SendQue($hash,$sCmd->{'id'},$send);
 	$send			.= "\r\n";
 	$send			= qq($send);
-		
+	
 	DevIo_OpenDev($hash, 0,, sub(){
 		my ($hash, $err) = @_;
 		Log3 $name, 2, "$name: $err" if($err);
@@ -729,7 +735,7 @@ Do_AnsQue
 					Log3 $name, 1, "Couldn't match answer ($ans) with SendQueue of $name.";
 				}
 				
-				Log3 $name, 5, "Deleted $ans from AnswerQueue.";
+				Log3 $name, 5, "Deleted $ans from AnswerQueue of $name.";
 				splice(@{$hash->{helper}->{AnsQue}}, $i, 1);
 			}
 		}
