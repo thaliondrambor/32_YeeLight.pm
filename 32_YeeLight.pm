@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 32_YeeLight.pm 2016-18-12 thaliondrambor $
+# $Id: 32_YeeLight.pm 2016-19-12 thaliondrambor $
 
 # TODO
 # light functions: timer, schedules
@@ -18,6 +18,7 @@
 #    added setting name, added start_cf and stop_cf
 #	 added scene (sunrise, sunset, happy_birthday)
 #	 added saving default status
+# 04 added reopen, added queues for sended commands and received answers to match them 
 
 # verbose level
 # 0: quit
@@ -83,6 +84,9 @@ YeeLight_Define
 	
 	YeeLight_GetUpdate($hash);
 	
+	my @ansQue = ();
+	$hash->{helper}->{AnsQue} = \@ansQue;
+	
 	return undef;
 }
 
@@ -102,8 +106,8 @@ sub
 YeeLight_Notify
 {
 	my ($own_hash,$dev_hash) = @_;
-	my $own_name = $own_hash->{NAME};
-	return undef if (IsDisabled($own_name));
+	my $ownName = $own_hash->{NAME};
+	return undef if (IsDisabled($ownName));
 	
 	my $devName = $dev_hash->{NAME};
 	my $events = deviceEvents($dev_hash,1);
@@ -111,7 +115,16 @@ YeeLight_Notify
  
 	foreach my $event (@{$events})
 	{
-		InternalTimer(gettimeofday() + 1, "YeeLight_GetUpdate", $own_hash) if ($devName eq "global") && ($event eq "INITIALIZED");
+		if ($devName eq "global" && $event eq "INITIALIZED")
+		{
+			InternalTimer(gettimeofday() + 1, "YeeLight_GetUpdate", $own_hash);
+		}
+		elsif ($devName eq $ownName)
+		{
+			if ($event eq "STATE")
+			{
+			}
+		}
 	}
 }
 
@@ -177,6 +190,7 @@ YeeLight_Set
 	$list .= "scene ";
 	$list .= "name ";
 	$list .= "default:noArg ";
+	$list .= "reopen:noArg ";
 	$list .= "statusrequest:noArg ";
 
 	if (lc $cmd eq 'on'
@@ -196,6 +210,7 @@ YeeLight_Set
 		|| lc $cmd eq 'scene'		
 		|| lc $cmd eq 'name'
 		|| lc $cmd eq 'default'
+		|| lc $cmd eq 'reopen'
 		|| lc $cmd eq 'statusrequest')
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
@@ -207,6 +222,7 @@ YeeLight_Set
 			|| lc $cmd eq "dimdown"
 			|| lc $cmd eq "toggle"
 			|| lc $cmd eq "default"
+			|| lc $cmd eq "reopen"
 			|| lc $cmd eq "stop_cf")
 		{
 			return YeeLight_SelectSetCmd($hash, $cmd, @val);
@@ -524,11 +540,22 @@ YeeLight_SelectSetCmd
 		YeeLight_SendCmd($hash,$sCmd,$cmd);
 	}
 	
+	elsif (lc $cmd eq "reopen")
+	{
+		DevIo_CloseDev($hash);
+		DevIo_OpenDev($hash, 0,, sub(){
+			my ($hash, $err) = @_;
+			Log3 $name, 2, "$name: $err" if($err);
+		});
+		Log3 $name, 3, "$name: reconnected.";
+	}
+	
 	# TODO
 	
 	#timer
 	#schedules
-	#color flow
+	
+	return undef;
 }
 
 sub
@@ -564,26 +591,18 @@ YeeLight_SendCmd
 	
 	$sCmd->{'id'}	= YeeLight_Bridge_GetID($hash);
 	my $send		= encode_json($sCmd);
+	Add_SendQue($hash,$sCmd->{'id'},$send);
 	$send			.= "\r\n";
 	$send			= qq($send);
 		
-	DevIo_OpenDev($hash, 0,, sub(){ 
+	DevIo_OpenDev($hash, 0,, sub(){
 		my ($hash, $err) = @_;
 		Log3 $name, 2, "$name: $err" if($err);
-	});
-	my $ret		= DevIo_Expect($hash, $send, 2);
-	Log3 $name, 4, "$name: $send returns $ret";
-	return "$name: Error: $ret" if ($ret =~ /error/) || (!$ret);
-	my $answer	= decode_json($ret);
-	
-	if (($answer) && ($answer->{'id'} eq $sCmd->{'id'}) && ($answer->{'result'}->[0] eq "ok"))
-	{
-		return undef;
-	}
-	else
-	{
-		return "Unknown error.";
-	}
+	}) if ($hash->{STATE} ne "opened");
+	DevIo_SimpleWrite($hash, $send, 2);
+	Log3 $name, 4, "$name is sending: $send";
+
+	return undef;
 }
 
 sub
@@ -592,53 +611,17 @@ YeeLight_StatusRequest
 	my ($hash)	= @_;
 	my $name	= $hash->{NAME};
 	my $msgID	= YeeLight_Bridge_GetID($hash);
-	my $send	= qq({"id":$msgID,"method":"get_prop","params":["power","bright","ct","rgb","hue","sat","color_mode","flowing","delayoff","flow_params","music_on","name"]}\r\n);
+	my $send	= '{"id":'.$msgID.',"method":"get_prop","params":["power","bright","ct","rgb","hue","sat","color_mode","flowing","delayoff","flow_params","music_on","name"]}';
+	Add_SendQue($hash,$msgID,$send);
+	$send		.= "\r\n";
+	$send		= qq($send);
 	
 	DevIo_OpenDev($hash, 0,, sub(){ 
 		my ($hash, $err) = @_;
 		Log3 $name, 2, "$name: $err" if($err);
-	});
-	my $ret		= DevIo_Expect($hash, $send, 2);
-	Log3 $name, 4, "$name: $send returns $ret";
-	return "$name: Error: $ret" if ($ret =~ /error/) || (!$ret);
-	
-	my $answer		= decode_json($ret);
-	my $rgb			= $answer->{'result'}->[3];
-	my $hexrgb		= sprintf("%06X",$rgb);
-	my $b			= $rgb % 256;
-	my $g			= (($rgb - $b) / 256) % 256;
-	my $r			= ($rgb - $b - ($g * 256)) / (256 * 256);
-	my $colormode;
-	my $colorflow;
-	my $musicmode;
-	$colormode	= "RGB"					if ($answer->{'result'}->[6] eq 1);
-	$colormode	= "color temperature"	if ($answer->{'result'}->[6] eq 2);
-	$colormode	= "HSV" 				if ($answer->{'result'}->[6] eq 3);
-	$colorflow	= "off"					if ($answer->{'result'}->[7] eq 0);
-	$colorflow	= "on"					if ($answer->{'result'}->[7] eq 1);
-	$musicmode	= "off"					if ($answer->{'result'}->[10] eq 0);
-	$musicmode	= "on"					if ($answer->{'result'}->[10] eq 1);
-	
-	if ($answer)
-	{
-		readingsBeginUpdate($hash);
-			readingsBulkUpdate($hash,"power",$answer->{'result'}->[0]);
-			readingsBulkUpdate($hash,"bright",$answer->{'result'}->[1]);
-			readingsBulkUpdate($hash,"ct",$answer->{'result'}->[2]);
-			readingsBulkUpdate($hash,"rgb",$hexrgb);
-			readingsBulkUpdate($hash,"rgb_blue",$b);
-			readingsBulkUpdate($hash,"rgb_green",$g);
-			readingsBulkUpdate($hash,"rgb_red",$r);
-			readingsBulkUpdate($hash,"hue",$answer->{'result'}->[4]);
-			readingsBulkUpdate($hash,"sat",$answer->{'result'}->[5]);
-			readingsBulkUpdate($hash,"color_mode",$colormode);
-			readingsBulkUpdate($hash,"color_flow",$colorflow);
-			readingsBulkUpdate($hash,"sleeptimer",$answer->{'result'}->[8]);
-			readingsBulkUpdate($hash,"flow_params",$answer->{'result'}->[9]);
-			readingsBulkUpdate($hash,"music_mode",$musicmode);
-			readingsBulkUpdate($hash,"name",$answer->{'result'}->[11]);
-		readingsEndUpdate($hash,1);
-	}
+	}) if ($hash->{STATE} ne "opened");
+	DevIo_SimpleWrite($hash, $send, 2);
+	Log3 $name, 4, "$name is sending $send";
 	
 	return undef;
 }
@@ -652,17 +635,116 @@ YeeLight_Read
 	my $buf = DevIo_SimpleRead($hash);
 	return undef if(!defined($buf));
 	
-	Log3 $name, 4, "reading from $name: $buf";
-	YeeLight_Parse($hash,$buf);
+	my $read;
+	my $search = "}";
+	my $offset = 0;
+	my $result = index($buf, $search, $offset);
+	
+	while ($result != -1)
+	{
+		my $sResult = index($buf, "}}", $offset);
+		$result++ if ($result == $sResult);
+		$result++;
+		$read = substr($buf,$offset,$result);
+		Log3 $name, 4, "reading from $name: $read";
+	
+		Add_AnsQue($hash,$read);
+		$offset = $result + 1;
+		$result = index($buf, $search, $offset);
+	}
+	
+	return undef;
+}
 
+sub
+Add_SendQue
+{
+	my ($hash,$id,$send) = @_;
+	my $name = $hash->{NAME};
+	
+	$hash->{helper}->{SendQue}->{$id} = $send;
+	Log3 $name, 5, "Added $hash->{helper}->{SendQue}->{$id} with id:$id to SendQueue of $name.";
+	
+	return undef;
+}
+
+sub
+Add_AnsQue
+{
+	my ($hash,$ans) = @_;
+	my $name = $hash->{NAME};
+	
+	push(@{$hash->{helper}->{AnsQue}},$ans);
+	my $length = @{$hash->{helper}->{AnsQue}};
+	Log3 $name, 5, "Added $hash->{helper}->{AnsQue}[($length - 1)] to AnswerQueue of $name.";
+	
+	Do_AnsQue($hash);
+	
+	return undef;
+}
+
+sub
+Do_AnsQue
+{
+	my ($hash) = @_;
+	my $name = $hash->{NAME};
+	my $i = 0;
+	
+	foreach my $ans (@{$hash->{helper}->{AnsQue}})
+	{
+		my $jsonAns = decode_json($ans);
+		if (defined($jsonAns->{'method'}) && $jsonAns->{'method'} eq "props")
+		{
+			Log3 $name, 4, "Detected notification broadcast from $name: $ans.";
+			YeeLight_Parse($hash,$jsonAns);
+			Log3 $name, 5, "Deleted $ans from AnswerQueue of $name.";
+			splice(@{$hash->{helper}->{AnsQue}}, $i, 1);
+		}
+		elsif (defined($jsonAns->{'id'}))
+		{
+			if (defined($hash->{helper}->{SendQue}->{$jsonAns->{'id'}}))
+			{
+				my $send = $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
+				my $jsonSend = decode_json($send);
+				if ((defined($jsonAns->{'result'})) && ($jsonAns->{'result'}->[0] eq "ok"))
+				{
+					Log3 $name, 3, "$name success sending $jsonSend->{'id'}: $send";
+					Log3 $name, 5, "Deleted $send from SendQueue of $name.";
+					delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
+				}
+				elsif ($ans =~ /error/)
+				{
+					Log3 $name, 1, "$name error sending $jsonSend->{'id'}: $send";
+					Log3 $name, 5, "Deleted $send from SendQueue of $name.";
+					delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
+				}
+				elsif (defined($jsonAns->{'result'}) && defined($jsonAns->{'result'}->[11]))
+				{
+					YeeLight_ParseStatusRequest($hash,$jsonAns);
+					Log3 $name, 5, "Deleted $send from SendQueue of $name.";
+					delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
+				}
+				else
+				{
+					Log3 $name, 1, "Couldn't match answer ($ans) with SendQueue of $name.";
+				}
+				
+				Log3 $name, 5, "Deleted $ans from AnswerQueue.";
+				splice(@{$hash->{helper}->{AnsQue}}, $i, 1);
+			}
+		}
+		
+		$i++;
+	}
+	
 	return undef;
 }
 
 sub
 YeeLight_Parse
 {
-	my ($hash,$in) = @_;
-	my $json = decode_json($in);
+	my ($hash,$json) = @_;
+	my $name = $hash->{NAME};
 	
 	my $rgb		= undef;
 	my $hexrgb	= undef;
@@ -702,7 +784,7 @@ YeeLight_Parse
 	
 	readingsBeginUpdate($hash);
 		readingsBulkUpdate($hash,"power",$json->{'params'}->{'power'})				if defined($json->{'params'}->{'power'});
-		readingsBulkUpdate($hash,"bright",$json->{'params'}->{'bright'})		if defined($json->{'params'}->{'bright'});
+		readingsBulkUpdate($hash,"bright",$json->{'params'}->{'bright'})			if defined($json->{'params'}->{'bright'});
 		readingsBulkUpdate($hash,"ct",$json->{'params'}->{'ct'})					if defined($json->{'params'}->{'ct'});
 		readingsBulkUpdate($hash,"rgb",$hexrgb)										if defined($hexrgb);
 		readingsBulkUpdate($hash,"rgb_blue",$b)										if defined($b);	
@@ -717,7 +799,57 @@ YeeLight_Parse
 		readingsBulkUpdate($hash,"music_mode",$musicmode)							if defined($musicmode);
 		readingsBulkUpdate($hash,"name",$json->{'params'}->{'name'})				if defined($json->{'params'}->{'name'});
 	readingsEndUpdate($hash,1);
+	
+	Log3 $name, 3, "$name updated readings.";
 
+	return undef;
+}
+
+sub
+YeeLight_ParseStatusRequest
+{
+	my ($hash,$answer)	= @_;
+	my $name = $hash->{NAME};
+
+	my $rgb		= $answer->{'result'}->[3];
+	my $hexrgb	= sprintf("%06X",$rgb);
+	my $b		= $rgb % 256;
+	my $g		= (($rgb - $b) / 256) % 256;
+	my $r		= ($rgb - $b - ($g * 256)) / (256 * 256);
+	my $colormode;
+	my $colorflow;
+	my $musicmode;
+	$colormode	= "RGB"					if ($answer->{'result'}->[6] eq 1);
+	$colormode	= "color temperature"	if ($answer->{'result'}->[6] eq 2);
+	$colormode	= "HSV" 				if ($answer->{'result'}->[6] eq 3);
+	$colorflow	= "off"					if ($answer->{'result'}->[7] eq 0);
+	$colorflow	= "on"					if ($answer->{'result'}->[7] eq 1);
+	$musicmode	= "off"					if ($answer->{'result'}->[10] eq 0);
+	$musicmode	= "on"					if ($answer->{'result'}->[10] eq 1);
+	
+	if ($answer)
+	{
+		readingsBeginUpdate($hash);
+			readingsBulkUpdate($hash,"power",$answer->{'result'}->[0]);
+			readingsBulkUpdate($hash,"bright",$answer->{'result'}->[1]);
+			readingsBulkUpdate($hash,"ct",$answer->{'result'}->[2]);
+			readingsBulkUpdate($hash,"rgb",$hexrgb);
+			readingsBulkUpdate($hash,"rgb_blue",$b);
+			readingsBulkUpdate($hash,"rgb_green",$g);
+			readingsBulkUpdate($hash,"rgb_red",$r);
+			readingsBulkUpdate($hash,"hue",$answer->{'result'}->[4]);
+			readingsBulkUpdate($hash,"sat",$answer->{'result'}->[5]);
+			readingsBulkUpdate($hash,"color_mode",$colormode);
+			readingsBulkUpdate($hash,"color_flow",$colorflow);
+			readingsBulkUpdate($hash,"sleeptimer",$answer->{'result'}->[8]);
+			readingsBulkUpdate($hash,"flow_params",$answer->{'result'}->[9]);
+			readingsBulkUpdate($hash,"music_mode",$musicmode);
+			readingsBulkUpdate($hash,"name",$answer->{'result'}->[11]);
+		readingsEndUpdate($hash,1);
+		
+		Log3 $name, 3, "$name full statusrequest";
+	}
+	
 	return undef;
 }
 
