@@ -557,10 +557,13 @@ YeeLight_SelectSetCmd
 		
 		return "input parameter: $args[2]\n$ret" if ($ret ne "");
 		
+		my $action = $args[1] + 0;
+		$action = 2 if ($action == 0) && ($hash->{READINGS}{power}{VAL} eq "off");		# override "previous state" with "off" if bulb state is off
+		
 		my $sCmd;
 		$sCmd->{'method'}		= "start_cf";							# method:start_cf
 		$sCmd->{'params'}->[0]	= $args[0] + 0;							# count
-		$sCmd->{'params'}->[1]	= $args[1] + 0;							# action
+		$sCmd->{'params'}->[1]	= $action;								# action
 		$sCmd->{'params'}->[2]	= $args[2];								# color flow tuples
 		
 		YeeLight_SendCmd($hash,$sCmd,$cmd);
@@ -637,7 +640,7 @@ YeeLight_SendCmd
 		my ($hash, $err) = @_;
 		Log3 $name, 2, "$name: $err" if($err);
 		return "$err" if($err);		
-	});
+	}) if ($hash->{STATE} ne "opened");
 	return "$name: Can't send command, if bulb is not connected." if ($hash->{STATE} ne "opened");
 	Add_SendQue($hash,$sCmd->{'id'},$send);
 	DevIo_SimpleWrite($hash, qq($send\r\n), 2);
@@ -658,7 +661,7 @@ YeeLight_StatusRequest
 		my ($hash, $err) = @_;
 		Log3 $name, 2, "$name: $err" if($err);
 		return "$err" if($err);
-	});
+	}) if ($hash->{STATE} ne "opened");
 	return "$name: Can't do status request, if bulb is not connected." if ($hash->{STATE} ne "opened");
 	Add_SendQue($hash,$msgID,$send);
 	DevIo_SimpleWrite($hash, qq($send\r\n), 2);
