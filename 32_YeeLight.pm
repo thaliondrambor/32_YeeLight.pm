@@ -19,6 +19,7 @@
 #	 added scene (sunrise, sunset, happy_birthday)
 #	 added saving default status
 # 04 added reopen, added queues for sended commands and received answers to match them 
+# 05 improved control of parameters for colorflow
 
 # verbose level
 # 0: quit
@@ -50,6 +51,7 @@ YeeLight_Initialize
 	$hash->{UndefFn}		= "YeeLight_Undef";
 	$hash->{ShutdownFn}		= "YeeLight_Shutdown";
 	$hash->{SetFn}			= "YeeLight_Set";
+	$hash->{ReadyFn}		= "YeeLight_Ready";
 	$hash->{AttrFn}			= "YeeLight_Attr";
 	$hash->{AttrList}		= 
 		"defaultramp "
@@ -519,9 +521,42 @@ YeeLight_SelectSetCmd
 	
 	elsif (lc $cmd eq "start_cf")
 	{
-		return "$name start_cf: count ($args[0]) must be numeric." if ($args[0] !~ /^\d?.?\d+$/);
-		return "$name start_cf: action ($args[1]) must be numeric." if ($args[1] !~ /^\d?.?\d+$/);
-		return "$name start_cf: action ($args[1]) must be 1, 2 or 3." if ($args[1] < 1) || ($args[1] > 3);
+		return "usage: set $name $cmd [count] [action] [flowparams]" if ($cnt != 3);
+		return "$name $cmd: count ($args[0]) must be numeric." if ($args[0] !~ /^\d?.?\d+$/);
+		return "$name $cmd: action ($args[1]) must be numeric." if ($args[1] !~ /^\d?.?\d+$/);
+		return "$name $cmd: action ($args[1]) must be 0 (previous state), 1 (stay on) or 2 (off)." if ($args[1] < 0) || ($args[1] > 2);
+		
+		my @params = split(/,/,$args[2]);
+		my $pCnt = @params;
+		return "$name $cmd: wrong count of parameter elements \"$pCnt\". Parameter must contain tuples of 4 elements (duration, mode, value, brightness)" if (($pCnt%4) != 0);
+		my $i = 1;
+		my $ret = "";
+		
+		foreach my $param (@params)
+		{
+			if (($i%4) == 1)
+			{
+				$ret.= "$name $cmd flow parameters: wrong parameter \"$param\" at $i. place. Duration must be numeric and equal or greater than 50.\n" if ($param !~ /^\d?.?\d+$/) || ($param < 50);
+			}
+			elsif (($i%4) == 2)
+			{
+				$ret.= "$name $cmd flow parameters: wrong parameter \"$param\" at $i. place. Choose mode from 1 (color), 2 (color temperature) or 7 (sleep).\n" if ($param != 1) && ($param != 2) && ($param != 7);
+			}
+			elsif (($i%4) == 3)
+			{
+				$ret.= "$name $cmd flow parameters: wrong parameter \"$param\" at $i. place. Value for rgb must be numeric and between 1 and 16777215.\n" if ($params[$i - 2] == 1) && (($param !~ /^\d?.?\d+$/) || ($param < 1) || ($param > 16777215));
+				$ret.= "$name $cmd flow parameters: wrong parameter \"$param\" at $i. place. Value for color temperature must be numeric and between 1 and 16777215.\n" if ($params[$i - 2] == 2) && (($param !~ /^\d?.?\d+$/) || ($param < 1700) || ($param > 6500));
+			}
+			elsif (($i%4) == 0)
+			{
+				$ret.= "$name $cmd flow parameters: wrong parameter \"$param\" at $i. place. Brightness must be numeric and between 1 and 100.\n" if ($params[$i - 3] != 7) && (($param < 1) || ($param > 100));
+			}
+			
+			$i++;
+		}
+		
+		return "input parameter: $args[2]\n$ret" if ($ret ne "");
+		
 		my $sCmd;
 		$sCmd->{'method'}		= "start_cf";							# method:start_cf
 		$sCmd->{'params'}->[0]	= $args[0] + 0;							# count
@@ -597,15 +632,15 @@ YeeLight_SendCmd
 	
 	$sCmd->{'id'}	= YeeLight_Bridge_GetID($hash);
 	my $send		= encode_json($sCmd);
-	Add_SendQue($hash,$sCmd->{'id'},$send);
-	$send			.= "\r\n";
-	$send			= qq($send);
 	
 	DevIo_OpenDev($hash, 0,, sub(){
 		my ($hash, $err) = @_;
 		Log3 $name, 2, "$name: $err" if($err);
-	}) if ($hash->{STATE} ne "opened");
-	DevIo_SimpleWrite($hash, $send, 2);
+		return "$err" if($err);		
+	});
+	return "$name: Can't send command, if bulb is not connected." if ($hash->{STATE} ne "opened");
+	Add_SendQue($hash,$sCmd->{'id'},$send);
+	DevIo_SimpleWrite($hash, qq($send\r\n), 2);
 	Log3 $name, 4, "$name is sending: $send";
 
 	return undef;
@@ -618,15 +653,15 @@ YeeLight_StatusRequest
 	my $name	= $hash->{NAME};
 	my $msgID	= YeeLight_Bridge_GetID($hash);
 	my $send	= '{"id":'.$msgID.',"method":"get_prop","params":["power","bright","ct","rgb","hue","sat","color_mode","flowing","delayoff","flow_params","music_on","name"]}';
-	Add_SendQue($hash,$msgID,$send);
-	$send		.= "\r\n";
-	$send		= qq($send);
 	
 	DevIo_OpenDev($hash, 0,, sub(){ 
 		my ($hash, $err) = @_;
 		Log3 $name, 2, "$name: $err" if($err);
-	}) if ($hash->{STATE} ne "opened");
-	DevIo_SimpleWrite($hash, $send, 2);
+		return "$err" if($err);
+	});
+	return "$name: Can't do status request, if bulb is not connected." if ($hash->{STATE} ne "opened");
+	Add_SendQue($hash,$msgID,$send);
+	DevIo_SimpleWrite($hash, qq($send\r\n), 2);
 	Log3 $name, 4, "$name is sending $send";
 	
 	return undef;
@@ -669,7 +704,7 @@ Add_SendQue
 	my $name = $hash->{NAME};
 	
 	$hash->{helper}->{SendQue}->{$id} = $send;
-	Log3 $name, 5, "Added $hash->{helper}->{SendQue}->{$id} with id:$id to SendQueue of $name.";
+	Log3 $name, 5, "$name SendQueue: added $hash->{helper}->{SendQue}->{$id} with id:$id";
 	
 	return undef;
 }
@@ -682,7 +717,7 @@ Add_AnsQue
 	
 	push(@{$hash->{helper}->{AnsQue}},$ans);
 	my $length = @{$hash->{helper}->{AnsQue}};
-	Log3 $name, 5, "Added $hash->{helper}->{AnsQue}[($length - 1)] to AnswerQueue of $name.";
+	Log3 $name, 5, "$name AnswerQueue: added $hash->{helper}->{AnsQue}[($length - 1)]";
 	
 	Do_AnsQue($hash);
 	
@@ -701,9 +736,9 @@ Do_AnsQue
 		my $jsonAns = decode_json($ans);
 		if (defined($jsonAns->{'method'}) && $jsonAns->{'method'} eq "props")
 		{
-			Log3 $name, 4, "Detected notification broadcast from $name: $ans.";
+			Log3 $name, 4, "$name: detected notification broadcast ($ans)";
 			YeeLight_Parse($hash,$jsonAns);
-			Log3 $name, 5, "Deleted $ans from AnswerQueue of $name.";
+			Log3 $name, 5, "$name AnswerQueue: deleted $ans";
 			splice(@{$hash->{helper}->{AnsQue}}, $i, 1);
 		}
 		elsif (defined($jsonAns->{'id'}))
@@ -715,27 +750,27 @@ Do_AnsQue
 				if ((defined($jsonAns->{'result'})) && ($jsonAns->{'result'}->[0] eq "ok"))
 				{
 					Log3 $name, 3, "$name success sending $jsonSend->{'id'}: $send";
-					Log3 $name, 5, "Deleted $send from SendQueue of $name.";
+					Log3 $name, 5, "$name SendQueue: deleted $send";
 					delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
 				}
 				elsif ($ans =~ /error/)
 				{
 					Log3 $name, 1, "$name error sending $jsonSend->{'id'}: $send";
-					Log3 $name, 5, "Deleted $send from SendQueue of $name.";
+					Log3 $name, 5, "$name SendQueue deleted $send";
 					delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
 				}
 				elsif (defined($jsonAns->{'result'}) && defined($jsonAns->{'result'}->[11]))
 				{
 					YeeLight_ParseStatusRequest($hash,$jsonAns);
-					Log3 $name, 5, "Deleted $send from SendQueue of $name.";
+					Log3 $name, 5, "$name SendQueue: deleted $send";
 					delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
 				}
 				else
 				{
-					Log3 $name, 1, "Couldn't match answer ($ans) with SendQueue of $name.";
+					Log3 $name, 1, "$name SendQueue: couldn't match answer ($ans)";
 				}
 				
-				Log3 $name, 5, "Deleted $ans from AnswerQueue of $name.";
+				Log3 $name, 5, "$name AnswerQueue: deleted $ans";
 				splice(@{$hash->{helper}->{AnsQue}}, $i, 1);
 			}
 		}
@@ -895,6 +930,15 @@ YeeLight_IsOn
 
 	YeeLight_SelectSetCmd($hash,"on") if ($hash->{READINGS}{power}{VAL} eq "off");
 	return undef;
+}
+
+sub
+YeeLight_Ready
+{
+	my ($hash) = @_;
+ 
+	# Versuch eines Verbindungsaufbaus, sofern die Verbindung beendet ist.
+	return DevIo_OpenDev($hash, 1, undef ) if ( $hash->{STATE} eq "disconnected" );
 }
 
 # helper subroutines
