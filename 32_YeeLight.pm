@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 32_YeeLight.pm 2016-19-12 thaliondrambor $
+# $Id: 32_YeeLight.pm 2016-21-12 thaliondrambor $
 
 # TODO
 # light functions: timer, schedules
@@ -20,6 +20,11 @@
 #	 added saving default status
 # 04 added reopen, added queues for sended commands and received answers to match them 
 # 05 improved control of parameters for colorflow
+# 06 fixed a bug with reading answers, when 2 or more arrive at the same time
+#	 strings are evaluated before de-/encoding, so that no more crashes should occure
+#	 because of invalid json strings
+#	 added queue for errors
+#	 added commands raw and flush
 
 # verbose level
 # 0: quit
@@ -47,6 +52,7 @@ YeeLight_Initialize
 	require "$attr{global}{modpath}/FHEM/DevIo.pm";
 
 	$hash->{ReadFn}			= "YeeLight_Read";
+	$hash->{NotifyFn}		= "YeeLight_Notify";
 	$hash->{DefFn}			= "YeeLight_Define";
 	$hash->{UndefFn}		= "YeeLight_Undef";
 	$hash->{ShutdownFn}		= "YeeLight_Shutdown";
@@ -72,10 +78,11 @@ YeeLight_Define
 	
 	DevIo_CloseDev($hash);
 	
-	$hash->{HOST}		= $a[2] if ($a[2]);
-    $hash->{PORT}		= 55443;
-    $hash->{PROTO}		= 1;
-	$hash->{NOTIFYDEV}	= "global";
+	$hash->{NAME} 				= $name;
+	$hash->{HOST}				= $a[2] if ($a[2]);
+    $hash->{PORT}				= 55443;
+    $hash->{PROTO}				= 1;
+	$hash->{NOTIFYDEV}			= "global";
 	
 	Log3 $name, 3, "YeeLight $name defined at $hash->{HOST}:$hash->{PORT}";
 	
@@ -88,6 +95,9 @@ YeeLight_Define
 	
 	my @ansQue = ();
 	$hash->{helper}->{AnsQue} = \@ansQue;
+	
+	my @errQue = ();
+	$hash->{helper}->{ErrQue} = \@errQue;
 	
 	return undef;
 }
@@ -148,9 +158,12 @@ YeeLight_Shutdown
 	my ($hash, $arg) = @_;
     my $name = $hash->{NAME};
 	
+	Log3 $name, 4, "$name: shutdown $name";
 	DevIo_CloseDev($hash);
 	RemoveInternalTimer($hash);
-	Log3 $name, 5, "YeeLight: shutdown $name";
+	
+	Log3 $name, 4, "$name: do flush because of shutdown";
+	YeeLight_Flush($hash);
     
     return undef;
 }
@@ -160,10 +173,13 @@ YeeLight_Undef
 {
 	my ($hash, $arg) = @_;
     my $name = $hash->{NAME};
-	
+
+	Log3 $name, 3, "YeeLight: undefined $name";
 	DevIo_CloseDev($hash);
 	RemoveInternalTimer($hash);
-	Log3 $name, 3, "YeeLight: undefined $name";
+	
+	Log3 $name, 4, "$name: do flush because of undefine";
+	YeeLight_Flush($hash);
     
     return undef;
 }
@@ -213,7 +229,9 @@ YeeLight_Set
 		|| lc $cmd eq 'name'
 		|| lc $cmd eq 'default'
 		|| lc $cmd eq 'reopen'
-		|| lc $cmd eq 'statusrequest')
+		|| lc $cmd eq 'statusrequest'
+		|| lc $cmd eq 'raw'
+		|| lc $cmd eq 'flush')
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
 		if (@val
@@ -225,7 +243,9 @@ YeeLight_Set
 			|| lc $cmd eq "toggle"
 			|| lc $cmd eq "default"
 			|| lc $cmd eq "reopen"
-			|| lc $cmd eq "stop_cf")
+			|| lc $cmd eq "stop_cf"
+			|| lc $cmd eq "flush"
+			|| lc $cmd eq "raw")
 		{
 			return YeeLight_SelectSetCmd($hash, $cmd, @val);
 		}
@@ -588,6 +608,27 @@ YeeLight_SelectSetCmd
 		Log3 $name, 3, "$name: reconnected.";
 	}
 	
+	elsif (lc $cmd eq "raw")											# Answer won't be deleted in AnsQue
+	{
+		return "$name: Raw command can't be empty." if (!defined($args[0]));
+		DevIo_OpenDev($hash, 0,, sub(){
+			my ($hash, $err) = @_;
+			Log3 $name, 2, "$name: $err" if($err);
+			return "$err" if($err);		
+		}) if ($hash->{STATE} ne "opened");
+		return "$name: Can't send command, if bulb is not connected." if ($hash->{STATE} ne "opened");
+		my $arg = join(",",@args);
+		Log3 $name, 2, "$name: sending raw command to bulb: $arg";
+		Add_SendQue($hash,$arg,"raw");
+		DevIo_SimpleWrite($hash, qq($arg\r\n), 2);
+	}
+	
+	elsif (lc $cmd eq "flush")
+	{
+		Log3 $name, 2, "$name: user initiated flush of queues";
+		YeeLight_Flush($hash);
+	}
+	
 	# TODO
 	
 	#timer
@@ -642,7 +683,7 @@ YeeLight_SendCmd
 		return "$err" if($err);		
 	}) if ($hash->{STATE} ne "opened");
 	return "$name: Can't send command, if bulb is not connected." if ($hash->{STATE} ne "opened");
-	Add_SendQue($hash,$sCmd->{'id'},$send);
+	Add_SendQue($hash,$send,$sCmd->{'id'});
 	DevIo_SimpleWrite($hash, qq($send\r\n), 2);
 	Log3 $name, 4, "$name is sending: $send";
 
@@ -663,7 +704,7 @@ YeeLight_StatusRequest
 		return "$err" if($err);
 	}) if ($hash->{STATE} ne "opened");
 	return "$name: Can't do status request, if bulb is not connected." if ($hash->{STATE} ne "opened");
-	Add_SendQue($hash,$msgID,$send);
+	Add_SendQue($hash,$send,$msgID);
 	DevIo_SimpleWrite($hash, qq($send\r\n), 2);
 	Log3 $name, 4, "$name is sending $send";
 	
@@ -679,23 +720,35 @@ YeeLight_Read
 	my $buf = DevIo_SimpleRead($hash);
 	return undef if(!defined($buf));
 	
+	$buf =~ s/\r\n||\n//g;
+	
+	Log3 $name, 5, "$name: Reading raw: $buf";
+	
 	my $read;
-	my $search = "}";
+	my $search = "}{";
 	my $offset = 0;
 	my $result = index($buf, $search, $offset);
 	
+	if ($result == -1)
+	{
+		Log3 $name, 4, "reading from $name: $buf";
+		Add_AnsQue($hash,$buf);
+	}
+	
 	while ($result != -1)
 	{
-		my $sResult = index($buf, "}}", $offset);
-		$result++ if ($result == $sResult);
-		$result++;
-		$read = substr($buf,$offset,$result);
+		$read = substr($buf,$offset,($result - $offset + 1));
 		Log3 $name, 4, "reading from $name: $read";
 	
 		Add_AnsQue($hash,$read);
-		$offset = $result + 1;
+		$offset = index($buf, "{", $result);
 		$result = index($buf, $search, $offset);
 	}
+	
+	$read = substr($buf,$offset,length($buf));
+	Log3 $name, 4, "reading from $name: $read";
+	
+	Add_AnsQue($hash,$read);
 	
 	return undef;
 }
@@ -703,11 +756,31 @@ YeeLight_Read
 sub
 Add_SendQue
 {
-	my ($hash,$id,$send) = @_;
+	my ($hash,$send,$id) = @_;
 	my $name = $hash->{NAME};
 	
-	$hash->{helper}->{SendQue}->{$id} = $send;
-	Log3 $name, 5, "$name SendQueue: added $hash->{helper}->{SendQue}->{$id} with id:$id";
+	if ($id eq "raw")
+	{
+		my $json;
+		eval { $json = decode_json($send); };
+		if ($@)
+		{
+			my $ret = $id.': '.$send;
+			Log3 $name, 1, "$name ErrorQueue: added send command $ret (not a valid json string). Error: $@";
+			push(@{$hash->{helper}->{ErrQue}},$ret);
+		}
+		else
+		{
+			$id = $json->{'id'} if (defined($json->{'id'}));
+			$hash->{helper}->{SendQue}->{$id} = $send;
+			Log3 $name, 5, "$name SendQueue: added $hash->{helper}->{SendQue}->{$id} with id:$id";
+		}
+	}
+	else
+	{
+		$hash->{helper}->{SendQue}->{$id} = $send;
+		Log3 $name, 5, "$name SendQueue: added $hash->{helper}->{SendQue}->{$id} with id:$id";
+	}
 	
 	return undef;
 }
@@ -718,11 +791,22 @@ Add_AnsQue
 	my ($hash,$ans) = @_;
 	my $name = $hash->{NAME};
 	
-	push(@{$hash->{helper}->{AnsQue}},$ans);
-	my $length = @{$hash->{helper}->{AnsQue}};
-	Log3 $name, 5, "$name AnswerQueue: added $hash->{helper}->{AnsQue}[($length - 1)]";
-	
-	Do_AnsQue($hash);
+	my $json;
+	eval { $json = decode_json($ans); };
+	if ($@ && $ans !~ /error/)
+	{
+		my $ret = RepairJson($hash,$ans);
+		Log3 $name, 1, "$name ErrorQueue: added answer \"$ans\" (not a valid json string). Error: $@";
+		push(@{$hash->{helper}->{ErrQue}},$ans);
+	}
+	else
+	{
+		push(@{$hash->{helper}->{AnsQue}},$ans);
+		my $length = @{$hash->{helper}->{AnsQue}};
+		Log3 $name, 5, "$name AnswerQueue: added $hash->{helper}->{AnsQue}[($length - 1)]";
+		
+		Do_AnsQue($hash);
+	}
 	
 	return undef;
 }
@@ -736,49 +820,59 @@ Do_AnsQue
 	
 	foreach my $ans (@{$hash->{helper}->{AnsQue}})
 	{
-		my $jsonAns = decode_json($ans);
-		if (defined($jsonAns->{'method'}) && $jsonAns->{'method'} eq "props")
+		if ($ans =~ /\"id\"\:\(null\)/)
 		{
-			Log3 $name, 4, "$name: detected notification broadcast ($ans)";
-			YeeLight_Parse($hash,$jsonAns);
+			Log3 $name, 1, "$name ErrorQueue: received answer with unknown id ($ans)";
+			push(@{$hash->{helper}->{ErrQue}},$ans);
 			Log3 $name, 5, "$name AnswerQueue: deleted $ans";
 			splice(@{$hash->{helper}->{AnsQue}}, $i, 1);
 		}
-		elsif (defined($jsonAns->{'id'}))
+		else
 		{
-			if (defined($hash->{helper}->{SendQue}->{$jsonAns->{'id'}}))
+			my $jsonAns = decode_json($ans);
+			if (defined($jsonAns->{'method'}) && $jsonAns->{'method'} eq "props")
 			{
-				my $send = $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
-				my $jsonSend = decode_json($send);
-				if ((defined($jsonAns->{'result'})) && ($jsonAns->{'result'}->[0] eq "ok"))
-				{
-					Log3 $name, 3, "$name success sending $jsonSend->{'id'}: $send";
-					Log3 $name, 5, "$name SendQueue: deleted $send";
-					delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
-				}
-				elsif ($ans =~ /error/)
-				{
-					Log3 $name, 1, "$name error sending $jsonSend->{'id'}: $send";
-					Log3 $name, 5, "$name SendQueue deleted $send";
-					delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
-				}
-				elsif (defined($jsonAns->{'result'}) && defined($jsonAns->{'result'}->[11]))
-				{
-					YeeLight_ParseStatusRequest($hash,$jsonAns);
-					Log3 $name, 5, "$name SendQueue: deleted $send";
-					delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
-				}
-				else
-				{
-					Log3 $name, 1, "$name SendQueue: couldn't match answer ($ans)";
-				}
-				
+				Log3 $name, 4, "$name: detected notification broadcast ($ans)";
+				YeeLight_Parse($hash,$jsonAns);
 				Log3 $name, 5, "$name AnswerQueue: deleted $ans";
 				splice(@{$hash->{helper}->{AnsQue}}, $i, 1);
 			}
+			elsif (defined($jsonAns->{'id'}))
+			{
+				if (defined($hash->{helper}->{SendQue}->{$jsonAns->{'id'}}))
+				{
+					my $send = $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
+					my $jsonSend = decode_json($send);
+					if ((defined($jsonAns->{'result'})) && ($jsonAns->{'result'}->[0] eq "ok"))
+					{
+						Log3 $name, 3, "$name success sending $jsonSend->{'id'}: $send";
+						Log3 $name, 5, "$name SendQueue: deleted $send";
+						delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
+					}
+					elsif ($ans =~ /error/)
+					{
+						Log3 $name, 1, "$name error sending $jsonSend->{'id'}: $send";
+						Log3 $name, 5, "$name SendQueue deleted $send";
+						delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
+					}
+					elsif (defined($jsonAns->{'result'}) && defined($jsonAns->{'result'}->[11]))
+					{
+						YeeLight_ParseStatusRequest($hash,$jsonAns);
+						Log3 $name, 5, "$name SendQueue: deleted $send";
+						delete $hash->{helper}->{SendQue}->{$jsonAns->{'id'}};
+					}
+					else
+					{
+						Log3 $name, 1, "$name SendQueue: couldn't match answer ($ans)";
+					}
+					
+					Log3 $name, 5, "$name AnswerQueue: deleted $ans";
+					splice(@{$hash->{helper}->{AnsQue}}, $i, 1);
+				}
+			}
+			
+			$i++;
 		}
-		
-		$i++;
 	}
 	
 	return undef;
@@ -926,6 +1020,59 @@ YeeLight_Init
 }
 
 sub
+YeeLight_Flush
+{
+	my ($hash) = @_;
+	my $name = $hash->{NAME};
+	
+	my $ret = "";
+	my $answer = "";
+	my $send = "";
+	my $error = "";
+
+	my $ans;
+	while(@{$hash->{helper}->{AnsQue}} != 0)
+	{
+		$ans	 = shift(@{$hash->{helper}->{AnsQue}});
+		$answer .= "   $ans\n";
+	}
+	
+	$answer .= "AnswerQueue:\n".$answer if ($answer ne "");
+	
+	foreach my $s(sort keys %{$hash->{helper}->{SendQue}})
+	{
+		$send .= $hash->{helper}->{SendQue}->{$s}."\n";
+		delete $hash->{helper}->{SendQue}->{$s};
+	}
+	
+	$send .= "SendQueue:\n".$send if ($send ne "");
+	
+	my $err;
+	while (@{$hash->{helper}->{ErrQue}} != 0)
+	{
+		$err	= shift(@{$hash->{helper}->{ErrQue}});
+		$error .= "   $err\n";
+	}
+	
+	$error .= "ErrorQueue:\n".$error if ($error ne "");
+	
+	$ret .= $send if ($send ne "");
+	$ret .= $answer if ($answer ne "");
+	$ret .= $error if ($error ne "");
+		
+	if ($ret ne "")
+	{
+		$ret = "$name: doing flush:\n".$ret;
+	}
+	else
+	{
+		$ret .= "$name: Tried to empty queues, but all three were empty.";
+	}
+	
+	Log3 $name, 4, "$ret";
+}
+
+sub
 YeeLight_IsOn
 {
 	my ($hash) = @_;
@@ -950,6 +1097,43 @@ sub
 IsValidIP
 {
 	return $_[0] =~ /^[\d\.]*$/ && inet_aton($_[0]);
+}
+
+sub
+RepairJson
+{
+	my ($hash,$json) = @_;
+	my $name = $hash->{NAME};
+	my $length = length($json);
+	my $oldJson = $json;
+	
+	$json .= "}" if (($length - 1) != rindex($json,"}"));
+	$json = "{".$json if (index($json,"{") != 0);
+	
+	if ($json eq $oldJson && ($length - 2) != rindex($json,"}}")) 
+	{
+		$json .= "}";
+	}
+	
+	if ($json ne $oldJson)
+	{
+		Log3 $name, 1, "$name: Invalid json $oldJson repaired to $json";
+		my $ret;
+		eval { $ret = encode_json($json); };
+		if ($@)
+		{
+			Log3 $name, 1, "$name ErrorQueue: added repaired answer \"$json\" (not a valid json string). Error: $@";
+			push(@{$hash->{helper}->{ErrQue}},$json);
+		}
+		else
+		{
+			push(@{$hash->{helper}->{AnsQue}},$json);
+			my $length = @{$hash->{helper}->{AnsQue}};
+			Log3 $name, 1, "$name AnswerQueue: added $hash->{helper}->{AnsQue}[($length - 1)] after repair";
+			
+			Do_AnsQue($hash);
+		}
+	}	
 }
 
 1;
