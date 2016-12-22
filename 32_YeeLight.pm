@@ -669,7 +669,7 @@ YeeLight_SelectSetCmd
 			my $sat		= $hash->{READINGS}{sat}{VAL} + 0;
 			my $val		= 100;
 			$curRGBorCT = HSVtoRGB($hue,$sat,$val);
-			Log3 $name, 5, "$name: convertet HSV ($hue $sat 100) to RGB ("
+			Log3 $name, 5, "$name: convertet HSV ($hue $sat 100) to RGB ($curRGBorCT)";
 		}
 		
 		if (@args == 0)
@@ -1248,7 +1248,7 @@ HSVtoRGB
 	$r = int(($r * 255) + 0.5);
 	$g = int(($g * 255) + 0.5);
 	$b = int(($b * 255) + 0.5);
-	my $rgb = ($r * 256 * 256) + ($g * 256) * $b;
+	my $rgb = ($r * 256 * 256) + ($g * 256) + $b;
 	
 	return $rgb;
 }
