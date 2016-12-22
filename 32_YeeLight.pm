@@ -30,7 +30,7 @@
 #	 because of invalid json strings
 #	 added queue for errors
 #	 added commands raw and flush
-# 07 small bugfix
+# 07 small bugfix, changed "rgb 000000" to "off"
 
 # verbose level
 # 0: quit
@@ -300,7 +300,7 @@ YeeLight_SelectSetCmd
 		my $sCmd;
 		$sCmd->{'method'}		= "set_hsv";							# method:set_hsv
 		$sCmd->{'params'}->[0]	= int($args[0]);						# hue
-		$sCmd->{'params'}->[1]	= $hash->{READINGS}{sat}{VAL} + 0;# saturation
+		$sCmd->{'params'}->[1]	= $hash->{READINGS}{sat}{VAL} + 0;		# saturation
 		$sCmd->{'params'}->[3]	= $args[1] if ($args[1]);				# ramp time
 		
 		YeeLight_SendCmd($hash,$sCmd,$cmd,3);
@@ -330,31 +330,48 @@ YeeLight_SelectSetCmd
 		my $sCmd;
 		my $rgb		= undef;
 
-		if (defined($args[0]) && $args[0] =~ /^[0-9A-Fa-f]{6}$/)
+		if ((@args == 1 || @args == 2) && $args[0] eq "000000")
 		{
-			$rgb	= "FFFFFF" if ($rgb eq "000000");
-			$rgb	= hex($args[0]);
-			$sCmd->{'params'}->[2] = $args[1] if ($args[1]);			# ramp time
+			$sCmd->{'method'}		= "set_power";
+			$sCmd->{'params'}->[0]	= "off";
+			$sCmd->{'params'}->[2]	= $args[1] if ($args[1]);
+			
+			YeeLight_SendCmd($hash,$sCmd,$cmd,2);
 		}
-		elsif((($cnt == 3) || ($cnt == 4)) && ($args[0] =~ /^\d?.?\d+$/) && ($args[1] =~ /^\d?.?\d+$/) && ($args[2] =~ /^\d?.?\d+$/))
+		elsif ($args[0] == 0 && $args[1] == 0 && $args[2] == 0 && (@args == 3 || @args == 4))
 		{
-			return "choose color (red, green, blue) between 0 and 255" if ($args[0] < 0) || ($args[0] > 255) || ($args[1] < 0) || ($args[1] > 255) || ($args[2] < 0) || ($args[2] > 255);
-			my $r	= int($args[0]);
-			my $g	= int($args[1]);
-			my $b	= int($args[2]);
-			$rgb	= ($r * 256 * 256) + ($g * 256) + $b;
-			$rgb	= (255 * 256 * 256) + (255 * 256) + 255 if ($rgb == 0);
-			$sCmd->{'params'}->[2] = $args[3] if ($args[3]);			# ramp time
+			$sCmd->{'method'}		= "set_power";
+			$sCmd->{'params'}->[0]	= "off";
+			$sCmd->{'params'}->[2]	= $args[3] if ($args[3]);
+			
+			YeeLight_SendCmd($hash,$sCmd,$cmd,2);
 		}
 		else
 		{
-			return "usage: set $name $cmd [red] [green] [blue] or set $name $cmd RRGGBB";
-		}
-		
-		$sCmd->{'method'}		= "set_rgb";							# method:set_rgb
-		$sCmd->{'params'}->[0]	= $rgb;									# rgb
+			if (defined($args[0]) && $args[0] =~ /^[0-9A-Fa-f]{6}$/)
+			{
+				$rgb	= hex($args[0]);
+				$sCmd->{'params'}->[2] = $args[1] if ($args[1]);			# ramp time
+			}
+			elsif((($cnt == 3) || ($cnt == 4)) && ($args[0] =~ /^\d?.?\d+$/) && ($args[1] =~ /^\d?.?\d+$/) && ($args[2] =~ /^\d?.?\d+$/))
+			{
+				return "choose color (red, green, blue) between 0 and 255" if ($args[0] < 0) || ($args[0] > 255) || ($args[1] < 0) || ($args[1] > 255) || ($args[2] < 0) || ($args[2] > 255);
+				my $r	= int($args[0]);
+				my $g	= int($args[1]);
+				my $b	= int($args[2]);
+				$rgb	= ($r * 256 * 256) + ($g * 256) + $b;
+				$sCmd->{'params'}->[2] = $args[3] if ($args[3]);			# ramp time
+			}
+			else
+			{
+				return "usage: set $name $cmd [red] [green] [blue] or set $name $cmd RRGGBB";
+			}
+			
+			$sCmd->{'method'}		= "set_rgb";							# method:set_rgb
+			$sCmd->{'params'}->[0]	= $rgb;									# rgb
 
-		YeeLight_SendCmd($hash,$sCmd,$cmd,2);
+			YeeLight_SendCmd($hash,$sCmd,$cmd,2);
+		}
 	}
 
 	elsif (lc $cmd eq "bright")
