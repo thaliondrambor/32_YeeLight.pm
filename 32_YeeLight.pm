@@ -300,7 +300,7 @@ YeeLight_SelectSetCmd
 		my $sCmd;
 		$sCmd->{'method'}		= "set_hsv";							# method:set_hsv
 		$sCmd->{'params'}->[0]	= int($args[0]);						# hue
-		$sCmd->{'params'}->[1]	= $hash->{READINGS}{saturation}{VAL} + 0;# saturation
+		$sCmd->{'params'}->[1]	= $hash->{READINGS}{sat}{VAL} + 0;# saturation
 		$sCmd->{'params'}->[3]	= $args[1] if ($args[1]);				# ramp time
 		
 		YeeLight_SendCmd($hash,$sCmd,$cmd,3);
