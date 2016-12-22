@@ -1,6 +1,11 @@
 ##############################################
 # $Id: 32_YeeLight.pm 2016-21-12 thaliondrambor $
 
+##### special thanks to herrmannj for permission to use code from 32_WifiLight.pm
+##### currently in use: WifiLight_HSV2RGB
+#####
+##### also thanks to f-zappa for testing and reporting bugs
+
 # TODO
 # light functions: timer, schedules
 # scenes
@@ -13,7 +18,7 @@
 # 00 start
 # 01 added dimup, dimdown, colortemperature, toggle
 # 02 changed colortemperature to ct, added hex input for rgb,
-#    added attribute defaultramp, added hue and sat
+#	 added attribute defaultramp, added hue and sat
 # 03 added reading of notification messages -> no more active reading of bulb status
 #    added setting name, added start_cf and stop_cf
 #	 added scene (sunrise, sunset, happy_birthday)
@@ -25,6 +30,7 @@
 #	 because of invalid json strings
 #	 added queue for errors
 #	 added commands raw and flush
+# 07 small bugfix
 
 # verbose level
 # 0: quit
@@ -206,6 +212,7 @@ YeeLight_Set
 	$list .= "start_cf ";
 	$list .= "stop_cf ";
 	$list .= "scene ";
+	#$list .= "blink ";
 	$list .= "name ";
 	$list .= "default:noArg ";
 	$list .= "reopen:noArg ";
@@ -227,6 +234,7 @@ YeeLight_Set
 		|| lc $cmd eq 'stop_cf'
 		|| lc $cmd eq 'scene'		
 		|| lc $cmd eq 'name'
+		#|| lc $cmd eq 'blink'
 		|| lc $cmd eq 'default'
 		|| lc $cmd eq 'reopen'
 		|| lc $cmd eq 'statusrequest'
@@ -234,21 +242,7 @@ YeeLight_Set
 		|| lc $cmd eq 'flush')
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
-		if (@val
-			|| lc $cmd eq 'statusrequest'
-			|| lc $cmd eq "on"
-			|| lc $cmd eq "off"
-			|| lc $cmd eq "dimup"
-			|| lc $cmd eq "dimdown"
-			|| lc $cmd eq "toggle"
-			|| lc $cmd eq "default"
-			|| lc $cmd eq "reopen"
-			|| lc $cmd eq "stop_cf"
-			|| lc $cmd eq "flush"
-			|| lc $cmd eq "raw")
-		{
-			return YeeLight_SelectSetCmd($hash, $cmd, @val);
-		}
+		return YeeLight_SelectSetCmd($hash, $cmd, @val);
 	}
 
 	return "Unknown argument $cmd, bearword as argument or wrong parameter(s), choose one of $list";
@@ -443,7 +437,7 @@ YeeLight_SelectSetCmd
 		}
 		elsif ($cnt == 2 || $cnt == 1)
 		{		
-			my $oldBright = $hash->{READINGS}{brightness}{VAL};
+			my $oldBright = $hash->{READINGS}{bright}{VAL};
 			$args[0] = $oldBright + $args[0] if ($cmd eq "dimup");
 			$args[0] = $oldBright - $args[0] if ($cmd eq "dimdown");
 			$args[0] = 0 if ($args[0] < 0);
@@ -617,7 +611,7 @@ YeeLight_SelectSetCmd
 			return "$err" if($err);		
 		}) if ($hash->{STATE} ne "opened");
 		return "$name: Can't send command, if bulb is not connected." if ($hash->{STATE} ne "opened");
-		my $arg = join(",",@args);
+		my $arg = join("",@args);
 		Log3 $name, 2, "$name: sending raw command to bulb: $arg";
 		Add_SendQue($hash,$arg,"raw");
 		DevIo_SimpleWrite($hash, qq($arg\r\n), 2);
@@ -629,6 +623,53 @@ YeeLight_SelectSetCmd
 		YeeLight_Flush($hash);
 	}
 	
+	elsif (lc $cmd eq "blink")
+	{
+		my $time	= $args[0] if $args[0];
+		my $times	= $args[1] if $args[1];
+		my $mode	= $args[2] if $args[2];
+		my $color	= $args[3] if $args[3];
+		my $curMode = $hash->{READINGS}{color_mode}{VAL};
+		my $curPower= $hash->{READINGS}{power}{VAL};
+		my $curRGBorCT;
+		
+		if ($curMode eq "RGB")
+		{
+			$curMode	= 1;
+			$curRGBorCT	= hex($hash->{READINGS}{rgb}{VAL});
+			
+		}
+		elsif ($curMode eq "color temperature")
+		{
+			$curMode	= 2;
+			$curRGBorCT	= $hash->{READINGS}{ct}{VAL};
+		}
+		elsif ($curMode eq "HSV")
+		{
+			$curMode	= 1;
+			my $hue		= $hash->{READINGS}{hue}{VAL} + 0;
+			my $sat		= $hash->{READINGS}{sat}{VAL} + 0;
+			my $val		= 100;
+			$curRGBorCT = HSVtoRGB($hue,$sat,$val);
+			Log3 $name, 5, "$name: convertet HSV ($hue $sat 100) to RGB ("
+		}
+		
+		if (@args == 0)
+		{
+			my $sCmd;
+			$sCmd->{'method'}		= "start_cf";							# method:start_cf
+			$sCmd->{'params'}->[0]	= 6;									# 6 visible changes (3 blink)
+			$sCmd->{'params'}->[1]	= 0 if ($curPower eq "on");
+			$sCmd->{'params'}->[1]	= 2 if ($curPower eq "off");
+			
+			my $flow	= "500,".$curMode.",".$curRGBorCT.",";
+			$sCmd->{'params'}->[2]	= $flow."100,".$flow."1" if ($curPower eq "on");
+			$sCmd->{'params'}->[2]	= $flow."1,".$flow."100" if ($curPower eq "off");
+			
+			YeeLight_SendCmd($hash,$sCmd,$cmd);
+		}
+	}
+
 	# TODO
 	
 	#timer
@@ -649,7 +690,8 @@ YeeLight_SendCmd
 		|| lc $cmd eq "start_cf"
 		|| lc $cmd eq "stop_cf"
 		|| lc $cmd eq "dimdown"
-		|| lc $cmd eq "dimup")
+		|| lc $cmd eq "dimup"
+		|| lc $cmd eq "blink")
 	{}
 	elsif (defined($sCmd->{'params'}->[$rCnt]))
 	{
@@ -734,21 +776,23 @@ YeeLight_Read
 		Log3 $name, 4, "reading from $name: $buf";
 		Add_AnsQue($hash,$buf);
 	}
-	
-	while ($result != -1)
+	else
 	{
-		$read = substr($buf,$offset,($result - $offset + 1));
+		while ($result != -1)
+		{
+			$read = substr($buf,$offset,($result - $offset + 1));
+			Log3 $name, 4, "reading from $name: $read";
+		
+			Add_AnsQue($hash,$read);
+			$offset = index($buf, "{", $result);
+			$result = index($buf, $search, $offset);
+		}
+		
+		$read = substr($buf,$offset,length($buf));
 		Log3 $name, 4, "reading from $name: $read";
-	
+		
 		Add_AnsQue($hash,$read);
-		$offset = index($buf, "{", $result);
-		$result = index($buf, $search, $offset);
 	}
-	
-	$read = substr($buf,$offset,length($buf));
-	Log3 $name, 4, "reading from $name: $read";
-	
-	Add_AnsQue($hash,$read);
 	
 	return undef;
 }
@@ -950,7 +994,7 @@ YeeLight_ParseStatusRequest
 	my $name = $hash->{NAME};
 
 	my $rgb		= $answer->{'result'}->[3];
-	my $hexrgb	= sprintf("%06X",$rgb);
+	my $hexrgb	= sprintf("%06x",$rgb);
 	my $b		= $rgb % 256;
 	my $g		= (($rgb - $b) / 256) % 256;
 	my $r		= ($rgb - $b - ($g * 256)) / (256 * 256);
@@ -1134,6 +1178,61 @@ RepairJson
 			Do_AnsQue($hash);
 		}
 	}	
+}
+
+sub
+HSVtoRGB
+{
+	my ($hue, $sat, $val) = @_;
+
+	if ($sat == 0) 
+	{
+		return int(($val * 2.55) +0.5), int(($val * 2.55) +0.5), int(($val * 2.55) +0.5);
+	}
+	$hue %= 360;
+	$hue /= 60;
+	$sat /= 100;
+	$val /= 100;
+	
+	my $i = int($hue);
+
+	my $f = $hue - $i;
+	my $p = $val * (1 - $sat);
+	my $q = $val * (1 - $sat * $f);
+	my $t = $val * (1 - $sat * (1 - $f));
+	
+	my ($r, $g, $b);
+	
+	if ( $i == 0 )
+	{
+		($r, $g, $b) = ($val, $t, $p);
+	}
+	elsif ( $i == 1 )
+	{
+		($r, $g, $b) = ($q, $val, $p);
+	}
+	elsif ( $i == 2 ) 
+	{
+		($r, $g, $b) = ($p, $val, $t);
+	}
+	elsif ( $i == 3 ) 
+	{
+		($r, $g, $b) = ($p, $q, $val);
+	}
+	elsif ( $i == 4 )
+	{
+		($r, $g, $b) = ($t, $p, $val);
+	}
+	else
+	{
+		($r, $g, $b) = ($val, $p, $q);
+	}
+	$r = int(($r * 255) + 0.5);
+	$g = int(($g * 255) + 0.5);
+	$b = int(($b * 255) + 0.5);
+	my $rgb = ($r * 256 * 256) + ($g * 256) * $b;
+	
+	return $rgb;
 }
 
 1;
