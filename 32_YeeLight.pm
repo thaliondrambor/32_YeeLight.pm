@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 32_YeeLight.pm 2016-22-12 thaliondrambor $
+# $Id: 32_YeeLight.pm 2016-23-12 thaliondrambor $
 
 ##### special thanks to herrmannj for permission to use code from 32_WifiLight.pm
 ##### currently in use: WifiLight_HSV2RGB
@@ -32,6 +32,7 @@
 #	 added commands raw and flush
 # 07 small bugfix, changed "rgb 000000" to "off"
 # 08 added blink
+# 09 added software bridge support
 
 # verbose level
 # 0: quit
@@ -66,9 +67,15 @@ YeeLight_Initialize
 	$hash->{SetFn}			= "YeeLight_Set";
 	$hash->{ReadyFn}		= "YeeLight_Ready";
 	$hash->{AttrFn}			= "YeeLight_Attr";
-	$hash->{AttrList}		= 
-		"defaultramp "
-		." $readingFnAttributes";
+	$hash->{AttrList}		= ""
+		."defaultramp "
+		."updateIP:0,1 "
+		."$readingFnAttributes";
+	
+	# Comm from Bridge
+	$hash->{Match}			= "^.*";
+	
+	$hash->{ParseFn}		= "YeeLightBridge_Parse";
 
 	return undef;
 }
@@ -80,16 +87,18 @@ YeeLight_Define
 	my @a = split("[ \t][ \t]*", $def); 
 	my $name = $a[0];
 	
-	return "wrong syntax: define [NAME] YeeLight [IP]" if (@a != 3);
+	return "wrong syntax: define [NAME] YeeLight [IP]" if (@a != 3 ) && (@a != 4);
 	return "wrong input for IP-address: 'xxx.xxx.xxx.xxx' (0 <= xxx <= 255)" if (!IsValidIP($a[2]));
 	
 	DevIo_CloseDev($hash);
 	
 	$hash->{NAME} 				= $name;
-	$hash->{HOST}				= $a[2] if ($a[2]);
+	$hash->{HOST}				= $a[2];
     $hash->{PORT}				= 55443;
     $hash->{PROTO}				= 1;
 	$hash->{NOTIFYDEV}			= "global";
+	$hash->{ID}					= $a[2] if (!$a[3]);
+	$hash->{ID}					= $a[3] if ($a[3]);
 	
 	Log3 $name, 3, "YeeLight $name defined at $hash->{HOST}:$hash->{PORT}";
 	
@@ -97,6 +106,13 @@ YeeLight_Define
         
 	my $dev = $hash->{HOST}.':'.$hash->{PORT};
 	$hash->{DeviceName} = $dev;
+	$hash->{DEF}		= $hash->{HOST};
+	
+	DevIo_OpenDev($hash, 0,, sub(){ 
+		my ($hash, $err) = @_;
+		Log3 $name, 2, "$name: $err" if($err);
+		return "$err" if($err);
+	});
 	
 	YeeLight_GetUpdate($hash);
 	
@@ -105,6 +121,8 @@ YeeLight_Define
 	
 	my @errQue = ();
 	$hash->{helper}->{ErrQue} = \@errQue;
+	
+	$modules{YeeLight}{defptr}{$hash->{ID}} = $hash;
 	
 	return undef;
 }
@@ -180,6 +198,7 @@ YeeLight_Undef
 {
 	my ($hash, $arg) = @_;
     my $name = $hash->{NAME};
+	my $id = $hash->{ID};
 
 	Log3 $name, 3, "YeeLight: undefined $name";
 	DevIo_CloseDev($hash);
@@ -187,6 +206,8 @@ YeeLight_Undef
 	
 	Log3 $name, 4, "$name: do flush because of undefine";
 	YeeLight_Flush($hash);
+	
+	delete($modules{YeeLight}{defptr}{$id}) if (defined($modules{YeeLight}{defptr}{$id}));
     
     return undef;
 }
@@ -700,8 +721,13 @@ sub
 YeeLight_SendCmd
 {
 	my ($hash,$sCmd,$cmd,$rCnt) = @_;
-	my $name	= $hash->{NAME};
-	my $error	= undef;
+	my $name		= $hash->{NAME};
+	my $error		= undef;
+	my $bHash		= $modules{YeeLightBridge}{defptr};
+	my $bName		= $bHash->{NAME};
+	my $defaultRamp = 0;
+	$defaultRamp	= $attr{$bName}{defaultramp} if ($attr{$bName}{defaultramp});
+	$defaultRamp	= $attr{$name}{defaultramp} if ($attr{$name}{defaultramp});
 	
 	if (lc $cmd eq "name"
 		|| lc $cmd eq "default"
@@ -720,10 +746,10 @@ YeeLight_SendCmd
 		$sCmd->{'params'}->[$rCnt - 1] = "smooth";						# flow
 		$sCmd->{'params'}->[$rCnt] += 0;								# force ramp time to be int
 	}
-	elsif (defined($attr{$name}{defaultramp}))
+	elsif ($defaultRamp != 0)
 	{
 		$sCmd->{'params'}->[$rCnt - 1] = "smooth";						# flow
-		$sCmd->{'params'}->[$rCnt] = $attr{$name}{defaultramp} + 0;		# force default ramp time to be int
+		$sCmd->{'params'}->[$rCnt] = $defaultRamp + 0;					# force default ramp time to be int
 	}
 	elsif ($sCmd->{'method'} eq "set_ct_abx")
 	{
@@ -1070,6 +1096,10 @@ YeeLight_Attr
 		{
 			return "Invalid parameter for $attrName. $attrName must be numeric and more than 30." if ($attrVal !~ /^\d?.?\d+$/) || ($attrVal < 30);
 		}
+		elsif ($attrName eq "updateIP")
+		{
+			return "Invalid parameter for $attrName. Choose \"0\" (don't update IP) or \"1\" (update IP)." if ($attrVal != 0) && ($attrVal != 1);
+		}
 	}
 	
 	return undef;
@@ -1151,6 +1181,124 @@ YeeLight_Ready
  
 	# Versuch eines Verbindungsaufbaus, sofern die Verbindung beendet ist.
 	return DevIo_OpenDev($hash, 1, undef ) if ( $hash->{STATE} eq "disconnected" );
+}
+
+# subroutines for bridge communication
+
+sub
+YeeLightBridge_Parse
+{
+	my ($io_hash,$incData) = @_;
+	my $name = $io_hash->{NAME};
+	
+	Log3 $name, 5, "$name (YeeLightBridge): $incData";
+	
+	my $sHash;
+	if ($incData =~ /NOTIFY/)
+	{
+		foreach my $data (split(/\r\n/,$incData))
+		{
+			my @d = split(/: /,$data);
+			$sHash->{$d[0]} = $d[1];
+		}
+		
+		my $bHash = $modules{YeeLightBridge}{defptr};
+		my $bName = $bHash->{NAME};
+		my $updateIP = 1;
+		$updateIP = $attr{$bName}{updateIP} if ($attr{$bName}{updateIP});
+		$updateIP = $attr{$name}{updateIP} if ($attr{$name}{updateIP});
+		
+		
+		my $host = $sHash->{"Location"};
+		$host = substr($host,11,length($host)-11);
+		$host = substr($host,0,length($host)-6);
+		
+		my $hash;
+		if ($modules{YeeLight}{defptr}{$sHash->{"id"}})
+		{
+			$hash = $modules{YeeLight}{defptr}{$sHash->{"id"}};
+			YeeLightBridge_UpdateDev($hash,$sHash,$updateIP);
+			
+			return $hash->{NAME};
+		}
+		elsif ($modules{YeeLight}{defptr}{$host})
+		{
+			$hash = $modules{YeeLight}{defptr}{$host};
+			if ($updateIP == 0)		# update IP false
+			{
+				$modules{YeeLight}{defptr}{$sHash->{"id"}} = $hash;
+				delete($modules{YeeLight}{defptr}{$host});
+			}
+			YeeLightBridge_UpdateDev($hash,$sHash,$updateIP);
+			
+			return $hash->{NAME};
+		}
+		else
+		{
+			my $newName = "YeeLight_".$sHash->{"id"};
+			$newName	= "YeeLight_".$sHash->{"name"} if ($sHash->{"name"});
+			
+			return "UNDEFINED ".$newName." YeeLight ".$host." ".$sHash->{"id"};
+		}
+	}	
+}
+
+sub
+YeeLightBridge_UpdateDev
+{
+	my ($hash,$mcHash,$updateIP) = @_;
+	my $name = $hash->{NAME};
+	
+	my $DeviceName	= $mcHash->{"Location"};
+	$DeviceName		= substr($DeviceName,11,length($DeviceName)-11);
+	my $host		= substr($DeviceName,0,length($DeviceName)-6);
+	my $port		= substr($DeviceName,length($host) + 1);
+	my $id			= $mcHash->{"id"};
+	my $model		= $mcHash->{"model"};
+	my $fw_ver		= $mcHash->{"fw_ver"};
+	my $support		= $mcHash->{"support"};
+	my $power		= $mcHash->{"power"};
+	my $bright		= $mcHash->{"bright"};
+	my $color_mode	= $mcHash->{"color_mode"};
+	$color_mode		= "RGB"					if ($color_mode eq 1);
+	$color_mode		= "color temperature"	if ($color_mode eq 2);
+	$color_mode		= "HSV" 				if ($color_mode eq 3);
+	my $ct			= $mcHash->{"ct"};
+	my $rgb			= $mcHash->{"rgb"};
+	my $hexrgb		= sprintf("%06x",$rgb);
+	my $b			= $rgb % 256;
+	my $g			= (($rgb - $b) / 256) % 256;
+	my $r			= ($rgb - $b - ($g * 256)) / (256 * 256);
+	my $hue			= $mcHash->{"hue"};
+	my $sat			= $mcHash->{"sat"};
+	my $bulbName	= $mcHash->{"name"};
+	
+	if ($updateIP == 1)	# update IP true
+	{
+		$hash->{HOST}				= $host				if !($hash->{HOST}) || ($hash->{HOST} ne $host);
+		$hash->{PORT}				= $port				if !($hash->{PORT}) || ($hash->{PORT} ne $port);
+		$hash->{DeviceName}			= $DeviceName		if !($hash->{DeviceName}) || ($hash->{DeviceName} ne $DeviceName);
+	}
+	$hash->{ID}					= $id				if !($hash->{ID}) || ($hash->{ID} ne $id);
+	$hash->{MODEL}				= $model			if !($hash->{MODEL}) || ($hash->{MODEL} ne $model);
+	$hash->{FW_VER}				= $fw_ver			if !($hash->{FW_VER}) || ($hash->{FW_VER} ne $fw_ver);
+	$hash->{helper}->{support}	= $support			if !($hash->{helper}->{support}) || ($hash->{helper}->{support} ne $support);
+	
+	readingsBeginUpdate($hash);
+		readingsBulkUpdateIfChanged($hash,"power",$power);
+		readingsBulkUpdateIfChanged($hash,"bright",$bright);
+		readingsBulkUpdateIfChanged($hash,"ct",$ct);
+		readingsBulkUpdateIfChanged($hash,"rgb",$hexrgb);
+		readingsBulkUpdateIfChanged($hash,"rgb_blue",$b);
+		readingsBulkUpdateIfChanged($hash,"rgb_green",$g);
+		readingsBulkUpdateIfChanged($hash,"rgb_red",$r);
+		readingsBulkUpdateIfChanged($hash,"hue",$hue);
+		readingsBulkUpdateIfChanged($hash,"sat",$sat);
+		readingsBulkUpdateIfChanged($hash,"color_mode",$color_mode);
+		readingsBulkUpdateIfChanged($hash,"name",$bulbName);
+	readingsEndUpdate($hash,1);
+	
+	return undef;
 }
 
 # helper subroutines
