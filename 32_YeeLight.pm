@@ -1224,7 +1224,7 @@ YeeLightBridge_Parse
 		elsif ($modules{YeeLight}{defptr}{$host})
 		{
 			$hash = $modules{YeeLight}{defptr}{$host};
-			if ($updateIP == 0)		# update IP false
+			if ($updateIP == 1)		# update IP true
 			{
 				$modules{YeeLight}{defptr}{$sHash->{"id"}} = $hash;
 				delete($modules{YeeLight}{defptr}{$host});
@@ -1276,10 +1276,10 @@ YeeLightBridge_UpdateDev
 	if ($updateIP == 1)	# update IP true
 	{
 		$hash->{HOST}				= $host				if !($hash->{HOST}) || ($hash->{HOST} ne $host);
-		$hash->{PORT}				= $port				if !($hash->{PORT}) || ($hash->{PORT} ne $port);
 		$hash->{DeviceName}			= $DeviceName		if !($hash->{DeviceName}) || ($hash->{DeviceName} ne $DeviceName);
+		$hash->{ID}					= $id				if !($hash->{ID}) || ($hash->{ID} ne $id);
 	}
-	$hash->{ID}					= $id				if !($hash->{ID}) || ($hash->{ID} ne $id);
+	$hash->{PORT}				= $port				if !($hash->{PORT}) || ($hash->{PORT} ne $port);
 	$hash->{MODEL}				= $model			if !($hash->{MODEL}) || ($hash->{MODEL} ne $model);
 	$hash->{FW_VER}				= $fw_ver			if !($hash->{FW_VER}) || ($hash->{FW_VER} ne $fw_ver);
 	$hash->{helper}->{support}	= $support			if !($hash->{helper}->{support}) || ($hash->{helper}->{support} ne $support);
