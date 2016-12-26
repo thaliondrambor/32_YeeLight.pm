@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 32_YeeLight.pm 2016-23-12 thaliondrambor $
+# $Id: 32_YeeLight.pm 2016-12-26 thaliondrambor $
 
 ##### special thanks to herrmannj for permission to use code from 32_WifiLight.pm
 ##### currently in use: WifiLight_HSV2RGB
@@ -9,8 +9,8 @@
 # TODO
 # light functions: timer, schedules
 # scenes
-# software bridge (UDP): autocreate devices (ID), search for devices,
-#						 listening for changes (eg. IP)
+# software bridge (UDP): search request
+
 # help
 # attributes: adjust brightness level
 
@@ -33,6 +33,8 @@
 # 07 small bugfix, changed "rgb 000000" to "off"
 # 08 added blink
 # 09 added software bridge support
+# 10 added timeout, keepAlive, SetExtensions (on-for-timer, off-for-timer, intervals)
+#    bugfixes
 
 # verbose level
 # 0: quit
@@ -51,6 +53,7 @@ use warnings;
 use POSIX;
 use Socket;
 use JSON::XS;
+use SetExtensions;
 
 sub
 YeeLight_Initialize
@@ -70,6 +73,8 @@ YeeLight_Initialize
 	$hash->{AttrList}		= ""
 		."defaultramp "
 		."updateIP:0,1 "
+		."timeout "
+		."keepAlive "
 		."$readingFnAttributes";
 	
 	# Comm from Bridge
@@ -122,6 +127,9 @@ YeeLight_Define
 	my @errQue = ();
 	$hash->{helper}->{ErrQue} = \@errQue;
 	
+	my %sendQue;
+	$hash->{helper}->{SendQue} = \%sendQue;
+	
 	$modules{YeeLight}{defptr}{$hash->{ID}} = $hash;
 	
 	return undef;
@@ -156,11 +164,15 @@ YeeLight_Notify
 		{
 			InternalTimer(gettimeofday() + 1, "YeeLight_GetUpdate", $own_hash);
 		}
-		elsif ($devName eq $ownName)
+		elsif ($devName eq "global" && $event =~ /^DELETEATTR $ownName keepAlive/)
 		{
-			if ($event eq "STATE")
-			{
-			}
+			RemoveInternalTimer($own_hash,"YeeLight_GetUpdate");
+			Log3 $ownName, 3, "$ownName: stopped sending periodic status requests.";
+		}
+		elsif ($devName eq "global" && $event =~ /^ATTR $ownName keepAlive/ )
+		{
+			YeeLight_GetUpdate($own_hash);
+			Log3 $ownName, 3, "$ownName: started sending periodic status requests.";
 		}
 	}
 }
@@ -173,6 +185,17 @@ YeeLight_GetUpdate
 	
 	Log3 $name, 4, "$name: GetUpdate";
 	YeeLight_StatusRequest($hash);
+	
+	my $bHash = $modules{YeeLightBridge}{defptr};
+	my $bName = $bHash->{NAME};
+	my $keepAlive	= 0;
+	$keepAlive		= $attr{$bName}{keepAlive} if $attr{$bName}{keepAlive};
+	$keepAlive		= $attr{$name}{keepAlive} if $attr{$name}{keepAlive};
+	
+	if ($keepAlive != 0)
+	{
+		InternalTimer(gettimeofday() + $keepAlive,"YeeLight_GetUpdate",$hash);
+	}
 	
 	return undef;
 }
@@ -222,6 +245,9 @@ YeeLight_Set
 	$list .= "on ";
 	$list .= "off ";
 	$list .= "toggle ";
+	$list .= "on-for-timer ";
+	$list .= "off-for-timer ";
+	$list .= "intervals ";
 	$list .= "hsv ";
 	$list .= "hue ";
 	$list .= "sat ";
@@ -239,10 +265,13 @@ YeeLight_Set
 	$list .= "default:noArg ";
 	$list .= "reopen:noArg ";
 	$list .= "statusrequest:noArg ";
-
+	
 	if (lc $cmd eq 'on'
 		|| lc $cmd eq 'off'
 		|| lc $cmd eq 'toggle'
+		|| lc $cmd eq 'on-for-timer'
+		|| lc $cmd eq 'off-for-timer'
+		|| lc $cmd eq 'intervals'
 		|| lc $cmd eq 'hsv'
 		|| lc $cmd eq 'hue'
 		|| lc $cmd eq 'sat'
@@ -254,7 +283,7 @@ YeeLight_Set
 		|| lc $cmd eq 'ct'
 		|| lc $cmd eq 'start_cf'
 		|| lc $cmd eq 'stop_cf'
-		|| lc $cmd eq 'scene'		
+		|| lc $cmd eq 'scene'
 		|| lc $cmd eq 'name'
 		|| lc $cmd eq 'blink'
 		|| lc $cmd eq 'default'
@@ -264,7 +293,7 @@ YeeLight_Set
 		|| lc $cmd eq 'flush')
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
-		return YeeLight_SelectSetCmd($hash, $cmd, @val);
+		return YeeLight_SelectSetCmd($hash, $list, $cmd, @val);
 	}
 
 	return "Unknown argument $cmd, bearword as argument or wrong parameter(s), choose one of $list";
@@ -273,7 +302,7 @@ YeeLight_Set
 sub
 YeeLight_SelectSetCmd
 {
-	my ($hash, $cmd, @args) = @_;
+	my ($hash, $list, $cmd, @args) = @_;
 	my $descriptor = '';
 	my $name = $hash->{NAME};
   
@@ -285,6 +314,12 @@ YeeLight_SelectSetCmd
 			$descriptor = $1;
 			splice (@args, $i, 1);
 		}
+	}
+	
+	if ($hash->{STATE} ne "opened" && lc $cmd ne 'reopen')
+	{
+		Log3 $name, 3, "$name can't send $cmd ".join(" ", @args)." with state \"$hash->{STATE}".
+		return "Can't send command if bulb is not connected. Try \"reopen\" and check, if bulb is powered. Current state is $hash->{STATE}";
 	}
   
 	my $cnt = @args;
@@ -664,10 +699,19 @@ YeeLight_SelectSetCmd
 	
 	elsif (lc $cmd eq "blink")
 	{
-		my $time	= $args[0] if $args[0];
-		my $times	= $args[1] if $args[1];
-		my $mode	= $args[2] if $args[2];
-		my $color	= $args[3] if $args[3];
+		return "usage: set $name $cmd [count] [mode] [color] [time]" if ($cnt != 0) && ($cnt != 1) && ($cnt != 4);
+		return "count must be numeric and at least 1" if ($cnt > 0) && (($args[0] < 1) || ($args[0] !~ /^\d?.?\d+$/));
+		return "choose color_mode from 1 (RGB) or 2 (color temperatur)" if ($cnt > 1) && (($args[1] < 1) || ($args[1] > 2));
+		return "color in RGB must be numeric, noted in hex and between 000001 - FFFFFF" if ($cnt > 1) && ($args[1] == 1) && (($args[2] !~ /^[0-9A-Fa-f]{6}$/) || ($args[2] eq "000000"));
+		return "color temperature must be numeric and between 1700 - 6500" if ($cnt > 1) && ($args[1] == 2) && (($args[2] !~ /^\d?.?\d+$/) || ($args[2] < 1700) || ($args[2] > 6500));
+		return "time must be numeric and at least 100" if ($cnt == 4) && (($args[3] !~ /^\d?.?\d+$/) || ($args[3] < 100));
+		
+		my $count	= $args[0]	if ($args[0]);
+		my $mode	= $args[1]	if ($args[1]);
+		my $color;
+		$color		= $args[2]	if ($args[2]) && ($args[1] == 2);
+		$color		= hex($args[2]) if ($args[2]) && ($args[1] == 1);
+		my $time	= int($args[3] / 2) if ($args[3]);
 		my $curMode = $hash->{READINGS}{color_mode}{VAL};
 		my $curPower= $hash->{READINGS}{power}{VAL};
 		my $curRGBorCT;
@@ -693,26 +737,26 @@ YeeLight_SelectSetCmd
 			Log3 $name, 5, "$name: convertet HSV ($hue $sat 100) to RGB ($curRGBorCT)";
 		}
 		
-		if (@args == 0)
-		{
-			my $sCmd;
-			$sCmd->{'method'}		= "start_cf";							# method:start_cf
-			$sCmd->{'params'}->[0]	= 6;									# 6 visible changes (3 blink)
-			$sCmd->{'params'}->[1]	= 0 if ($curPower eq "on");
-			$sCmd->{'params'}->[1]	= 2 if ($curPower eq "off");
-			
-			my $flow	= "500,".$curMode.",".$curRGBorCT.",";
-			$sCmd->{'params'}->[2]	= $flow."100,".$flow."1" if ($curPower eq "on");
-			$sCmd->{'params'}->[2]	= $flow."1,".$flow."100" if ($curPower eq "off");
-			
-			YeeLight_SendCmd($hash,$sCmd,$cmd);
-		}
+		my $sCmd;
+		$sCmd->{'method'}		= "start_cf";							# method:start_cf
+		$sCmd->{'params'}->[0]	= 6 if ($cnt == 0);						# 6 visible changes (3 blink)
+		$sCmd->{'params'}->[0]	= 2 * $count if ($count);				# 2 * $count visible changes ($count blink)
+		$sCmd->{'params'}->[1]	= 0 if ($curPower eq "on");
+		$sCmd->{'params'}->[1]	= 2 if ($curPower eq "off");
+		
+		my $flow = "500,".$curMode.",".$curRGBorCT.",";
+		$flow = $time.",".$mode.",".$color."," if ($mode);
+		
+		$sCmd->{'params'}->[2]	= $flow."100,".$flow."1" if ($curPower eq "on");
+		$sCmd->{'params'}->[2]	= $flow."1,".$flow."100" if ($curPower eq "off");
+		
+		YeeLight_SendCmd($hash,$sCmd,$cmd);
 	}
 
-	# TODO
-	
-	#timer
-	#schedules
+	else
+	{
+		return SetExtensions($hash, $list, $name, $cmd, @args);
+	}
 	
 	return undef;
 }
@@ -855,7 +899,7 @@ Add_SendQue
 		{
 			my $ret = $id.': '.$send;
 			Log3 $name, 1, "$name ErrorQueue: added send command $ret (not a valid json string). Error: $@";
-			push(@{$hash->{helper}->{ErrQue}},$ret);
+			push(@{$hash->{helper}->{ErrQue}},"not valid json: ".$ret);
 		}
 		else
 		{
@@ -868,6 +912,17 @@ Add_SendQue
 	{
 		$hash->{helper}->{SendQue}->{$id} = $send;
 		Log3 $name, 5, "$name SendQueue: added $hash->{helper}->{SendQue}->{$id} with id:$id";
+	}
+	
+	my $bHash = $modules{YeeLightBridge}{defptr};
+	my $bName = $bHash->{NAME};
+	my $timeout	= 3;
+	$timeout	= $attr{$bName}{timeout} if $attr{$bName}{timeout};
+	$timeout	= $attr{$name}{timeout} if $attr{$name}{timeout};
+	if ($timeout != 0)
+	{
+		RemoveInternalTimer($hash,"YeeLight_IsReachable");
+		InternalTimer(gettimeofday() + $timeout,"YeeLight_IsReachable",$hash);
 	}
 	
 	return undef;
@@ -885,7 +940,7 @@ Add_AnsQue
 	{
 		my $ret = RepairJson($hash,$ans);
 		Log3 $name, 1, "$name ErrorQueue: added answer \"$ans\" (not a valid json string). Error: $@";
-		push(@{$hash->{helper}->{ErrQue}},$ans);
+		push(@{$hash->{helper}->{ErrQue}},"not valid json: ".$ans);
 	}
 	else
 	{
@@ -911,7 +966,7 @@ Do_AnsQue
 		if ($ans =~ /\"id\"\:\(null\)/)
 		{
 			Log3 $name, 1, "$name ErrorQueue: received answer with unknown id ($ans)";
-			push(@{$hash->{helper}->{ErrQue}},$ans);
+			push(@{$hash->{helper}->{ErrQue}},"unknown id: ".$ans);
 			Log3 $name, 5, "$name AnswerQueue: deleted $ans";
 			splice(@{$hash->{helper}->{AnsQue}}, $i, 1);
 		}
@@ -1094,11 +1149,19 @@ YeeLight_Attr
 	{
 		if ($attrName eq "defaultramp")
 		{
-			return "Invalid parameter for $attrName. $attrName must be numeric and more than 30." if ($attrVal !~ /^\d?.?\d+$/) || ($attrVal < 30);
+			return "Invalid parameter for $attrName. $attrName must be numeric and at least 30." if ($attrVal !~ /^\d?.?\d+$/) || ($attrVal < 30);
 		}
 		elsif ($attrName eq "updateIP")
 		{
 			return "Invalid parameter for $attrName. Choose \"0\" (don't update IP) or \"1\" (update IP)." if ($attrVal != 0) && ($attrVal != 1);
+		}
+		elsif ($attrName eq "timeout")
+		{
+			return "Invalid parameter for $attrName. $attrName must be numeric." if ($attrVal !~ /^\d?.?\d+$/);
+		}
+		elsif ($attrName eq "keepAlive")
+		{
+			return "Invalid parameter for $attrName. $attrName must be numeric and at least 60 or 0." if ($attrVal !~ /^\d?.?\d+$/) || (($attrVal < 60) && ($attrVal == 0));
 		}
 	}
 	
@@ -1183,6 +1246,28 @@ YeeLight_Ready
 	return DevIo_OpenDev($hash, 1, undef ) if ( $hash->{STATE} eq "disconnected" );
 }
 
+sub
+YeeLight_IsReachable
+{
+	my ($hash) = @_;
+	my $name = $hash->{NAME};
+	
+	if (%{$hash->{helper}->{SendQue}} != 0)
+	{
+		foreach my $s (keys %{$hash->{helper}->{SendQue}})
+		{
+			my $send = $hash->{helper}->{SendQue}->{$s};
+			Log3 $name, 1, "$name ErrorQueue: command wasn't answered in time ($send)";
+			push(@{$hash->{helper}->{ErrQue}},"not in time: ".$send);
+			Log3 $name, 5, "$name SendQueue: deleted $send";
+			delete $hash->{helper}->{SendQue}->{$s};
+		}
+		DevIo_Disconnected($hash);
+	}
+	
+	return undef;	
+}
+
 # subroutines for bridge communication
 
 sub
@@ -1235,11 +1320,27 @@ YeeLightBridge_Parse
 		}
 		else
 		{
-			my $newName = "YeeLight_".$sHash->{"id"};
-			$newName	= "YeeLight_".$sHash->{"name"} if ($sHash->{"name"});
-			
-			return "UNDEFINED ".$newName." YeeLight ".$host." ".$sHash->{"id"};
+			foreach my $y (%{$modules{YeeLight}{defptr}})
+			{
+				$hash = $modules{YeeLight}{defptr}{$y};
+				if ($hash->{IP} eq $host)
+				{
+					if ($updateIP == 1)		# update IP true
+					{
+						$modules{YeeLight}{defptr}{$sHash->{"id"}} = $hash;
+						delete($modules{YeeLight}{defptr}{$host});
+					}
+					YeeLightBridge_UpdateDev($hash,$sHash,$updateIP);
+				
+					return $hash->{NAME};
+				}
+			}
 		}
+
+		my $newName = "YeeLight_".$sHash->{"id"};
+		$newName	= "YeeLight_".$sHash->{"name"} if ($sHash->{"name"});
+		
+		return "UNDEFINED ".$newName." YeeLight ".$host." ".$sHash->{"id"};
 	}	
 }
 

@@ -1,8 +1,9 @@
 ##############################################
-# $Id: 32_YeeLightBridge.pm 2016-12-23 thaliondrambor $
+# $Id: 32_YeeLightBridge.pm 2016-12-26 thaliondrambor $
 #
 # versions
 # 00 start
+# 01 added timeout, keepAlive
 #
 # verbose level
 # 0: quit
@@ -40,6 +41,8 @@ YeeLightBridge_Initialize
 	$hash->{AttrList}		= ""
 		."defaultramp "
 		."updateIP:0,1 "
+		."timeout "
+		."keepAlive "
 		."$readingFnAttributes";
 		
 	# Comm with Devices
@@ -115,11 +118,19 @@ YeeLightBridge_Attr
 	{
 		if ($attrName eq "defaultramp")
 		{
-			return "Invalid parameter for $attrName. $attrName must be numeric and more than 30." if ($attrVal !~ /^\d?.?\d+$/) || ($attrVal < 30);
+			return "Invalid parameter for $attrName. $attrName must be numeric and at least 30." if ($attrVal !~ /^\d?.?\d+$/) || ($attrVal < 30);
 		}
 		elsif ($attrName eq "updateIP")
 		{
 			return "Invalid parameter for $attrName. Choose \"0\" (don't update IP) or \"1\" (update IP)." if ($attrVal != 0) && ($attrVal != 1);
+		}
+		elsif ($attrName eq "timeout")
+		{
+			return "Invalid parameter for $attrName. $attrName must be numeric." if ($attrVal !~ /^\d?.?\d+$/);
+		}
+		elsif ($attrName eq "keepAlive")
+		{
+			return "Invalid parameter for $attrName. $attrName must be numeric and at least 60 or 0." if ($attrVal !~ /^\d?.?\d+$/) || (($attrVal < 60) && ($attrVal == 0));
 		}
 	}
 	
