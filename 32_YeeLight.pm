@@ -35,6 +35,7 @@
 # 09 added software bridge support
 # 10 added timeout, keepAlive, SetExtensions (on-for-timer, off-for-timer, intervals)
 #    bugfixes
+# 11 bugfix for ramp = 0 with defaultramp set
 
 # verbose level
 # 0: quit
@@ -107,7 +108,7 @@ YeeLight_Define
 	
 	Log3 $name, 3, "YeeLight $name defined at $hash->{HOST}:$hash->{PORT}";
 	
-	$attr{$name}{room} = "YeeLight" if(!defined( $attr{$name}{room}));
+	$attr{$name}{room} = "YeeLight" if !defined( $attr{$name}{room});
         
 	my $dev = $hash->{HOST}.':'.$hash->{PORT};
 	$hash->{DeviceName} = $dev;
@@ -141,8 +142,8 @@ YeeLight_Bridge_GetID
 	my ($hash)	= @_;
 	my $curID	= 1;
 	$curID		= $data{YeeLightBridge}{msgID} if ($data{YeeLightBridge}{msgID});
-	$data{YeeLightBridge}{msgID} = 1 if (!$data{YeeLightBridge}{msgID});
-	$data{YeeLightBridge}{msgID} = 1 if ($data{YeeLightBridge}{msgID} >= 9999);
+	$data{YeeLightBridge}{msgID} = 1 if !defined($data{YeeLightBridge}{msgID});
+	$data{YeeLightBridge}{msgID} = 1 if defined($data{YeeLightBridge}{msgID} >= 9999);
 	$data{YeeLightBridge}{msgID}++;
 	return $curID;
 }
@@ -189,8 +190,8 @@ YeeLight_GetUpdate
 	my $bHash = $modules{YeeLightBridge}{defptr};
 	my $bName = $bHash->{NAME};
 	my $keepAlive	= 0;
-	$keepAlive		= $attr{$bName}{keepAlive} if $attr{$bName}{keepAlive};
-	$keepAlive		= $attr{$name}{keepAlive} if $attr{$name}{keepAlive};
+	$keepAlive		= $attr{$bName}{keepAlive} if defined($attr{$bName}{keepAlive});
+	$keepAlive		= $attr{$name}{keepAlive} if defined($attr{$name}{keepAlive});
 	
 	if ($keepAlive != 0)
 	{
@@ -329,7 +330,7 @@ YeeLight_SelectSetCmd
 		my $sCmd;
 		$sCmd->{'method'}		= "set_power";							# method:set_power
 		$sCmd->{'params'}->[0]	= $cmd;									# on/off
-		$sCmd->{'params'}->[2]	= $args[0] if ($args[0]);				# ramp time
+		$sCmd->{'params'}->[2]	= $args[0] if (defined($args[0]));		# ramp time
 		
 		YeeLight_SendCmd($hash,$sCmd,$cmd,2);
 	}
@@ -783,10 +784,10 @@ YeeLight_SendCmd
 	{}
 	elsif (defined($sCmd->{'params'}->[$rCnt]))
 	{
-		$error = "usage: set $name $cmd [milliseconds]" if $sCmd->{'params'}->[$rCnt] !~ /^\d?.?\d+$/;
-		$error = "minimum for milliseconds is 30" if $sCmd->{'params'}->[$rCnt] < 30;
-		Log3 $name, 4, "$name: $error" if (defined $error);
-		return $error if (defined $error);
+		$error = "usage: set $name $cmd [milliseconds]" if ($sCmd->{'params'}->[$rCnt] !~ /^\d?.?\d+$/);
+		$error = "minimum for milliseconds is 30 or 0 for sudden" if ($sCmd->{'params'}->[$rCnt] < 30) && ($sCmd->{'params'}->[$rCnt] != 0);
+		Log3 $name, 4, "$name: $error" if defined($error);
+		return $error if defined($error);
 		$sCmd->{'params'}->[$rCnt - 1] = "smooth";						# flow
 		$sCmd->{'params'}->[$rCnt] += 0;								# force ramp time to be int
 	}
