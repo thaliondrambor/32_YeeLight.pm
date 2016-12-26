@@ -36,6 +36,7 @@
 # 10 added timeout, keepAlive, SetExtensions (on-for-timer, off-for-timer, intervals)
 #    bugfixes
 # 11 bugfix for ramp = 0 with defaultramp set
+#    bugfix for bug with scene command
 
 # verbose level
 # 0: quit
@@ -605,7 +606,7 @@ YeeLight_SelectSetCmd
 			push(@newArgs,$scene{$args[0]}{val});
 		}
 		
-		YeeLight_SelectSetCmd($hash,$scene{$args[0]}{type},@newArgs);
+		YeeLight_SelectSetCmd($hash,$list,$scene{$args[0]}{type},@newArgs);
 	}
 	
 	elsif (lc $cmd eq "start_cf")
