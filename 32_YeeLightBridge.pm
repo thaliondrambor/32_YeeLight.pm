@@ -1,9 +1,10 @@
 ##############################################
-# $Id: 32_YeeLightBridge.pm 2016-12-26 thaliondrambor $
+# $Id: 32_YeeLightBridge.pm 2016-12-27 thaliondrambor $
 #
 # versions
 # 00 start
 # 01 added timeout, keepAlive
+# 02 added Log at ReadFn
 #
 # verbose level
 # 0: quit
@@ -102,7 +103,7 @@ YeeLightBridge_Set
 	
 	if (lc $cmd eq 'search')
 	{
-		return "$name: search command doesn't work yet. Sorry :-(";
+		#return "$name: search command doesn't work yet. Sorry :-(";
 		return YeeLightBridgeMulticast_Send($hash);
 	}
 	
@@ -147,7 +148,7 @@ YeeLightBridge_Read
 	my $buf;
 	
 	$mcast->recv($buf,1024);
-	
+	Log3 $name, 4, "received multicast message on 239.255.255.250:1982:\r\n$buf";
 	Dispatch($hash,$buf,0);
 }
 
