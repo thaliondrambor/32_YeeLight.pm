@@ -36,6 +36,8 @@
 # 10 added timeout, keepAlive, SetExtensions (on-for-timer, off-for-timer, intervals)
 #    bugfixes
 # 11 bugfix for ramp = 0 with defaultramp set
+#    bugfix for bug with scene command
+# 12 added attribut userScene[0-9], started to add model of lamp
 
 # verbose level
 # 0: quit
@@ -76,6 +78,7 @@ YeeLight_Initialize
 		."updateIP:0,1 "
 		."timeout "
 		."keepAlive "
+		#."userScene[0-9] "
 		."$readingFnAttributes";
 	
 	# Comm from Bridge
@@ -231,7 +234,7 @@ YeeLight_Undef
 	Log3 $name, 4, "$name: do flush because of undefine";
 	YeeLight_Flush($hash);
 	
-	delete($modules{YeeLight}{defptr}{$id}) if (defined($modules{YeeLight}{defptr}{$id}));
+	delete($modules{YeeLight}{defptr}{$id}) if defined($modules{YeeLight}{defptr}{$id});
     
     return undef;
 }
@@ -241,31 +244,37 @@ YeeLight_Set
 {
     
     my ($hash, $name, $cmd, @val) = @_;
+	my $model = $hash->{MODEL};
     
 	my $list = "";
+	# Commands supported by every yeelight
 	$list .= "on ";
 	$list .= "off ";
 	$list .= "toggle ";
 	$list .= "on-for-timer ";
 	$list .= "off-for-timer ";
 	$list .= "intervals ";
-	$list .= "hsv ";
-	$list .= "hue ";
-	$list .= "sat ";
-	$list .= "rgb ";
 	$list .= "bright ";
 	$list .= "dimup ";
 	$list .= "dimdown ";
-	$list .= "color ";
-	$list .= "ct ";
-	$list .= "start_cf ";
-	$list .= "stop_cf ";
-	$list .= "scene ";
-	$list .= "blink ";
 	$list .= "name ";
 	$list .= "default:noArg ";
 	$list .= "reopen:noArg ";
 	$list .= "statusrequest:noArg ";
+	# Commands supported by color and led stripe
+	if (($model eq "color") || ($model eq "stripe") || !defined($model))
+	{
+		$list .= "hsv ";
+		$list .= "hue ";
+		$list .= "sat ";
+		$list .= "rgb ";
+		$list .= "color ";
+		$list .= "ct ";
+		$list .= "start_cf ";
+		$list .= "stop_cf ";
+		$list .= "scene ";
+		$list .= "blink ";
+	}
 	
 	if (lc $cmd eq 'on'
 		|| lc $cmd eq 'off'
@@ -273,25 +282,28 @@ YeeLight_Set
 		|| lc $cmd eq 'on-for-timer'
 		|| lc $cmd eq 'off-for-timer'
 		|| lc $cmd eq 'intervals'
-		|| lc $cmd eq 'hsv'
-		|| lc $cmd eq 'hue'
-		|| lc $cmd eq 'sat'
-		|| lc $cmd eq 'rgb'
 		|| lc $cmd eq 'bright'
 		|| lc $cmd eq 'dimup'
 		|| lc $cmd eq 'dimdown'
+		|| lc $cmd eq 'name'
+		|| lc $cmd eq 'default'
+		|| lc $cmd eq 'reopen'
+		|| lc $cmd eq 'statusrequest'
+		|| lc $cmd eq 'raw'
+		|| lc $cmd eq 'flush'
+		|| ((lc $cmd eq 'hsv'
+		|| lc $cmd eq 'hue'
+		|| lc $cmd eq 'sat'
+		|| lc $cmd eq 'rgb'
 		|| lc $cmd eq 'color'
 		|| lc $cmd eq 'ct'
 		|| lc $cmd eq 'start_cf'
 		|| lc $cmd eq 'stop_cf'
 		|| lc $cmd eq 'scene'
-		|| lc $cmd eq 'name'
-		|| lc $cmd eq 'blink'
-		|| lc $cmd eq 'default'
-		|| lc $cmd eq 'reopen'
-		|| lc $cmd eq 'statusrequest'
-		|| lc $cmd eq 'raw'
-		|| lc $cmd eq 'flush')
+		|| lc $cmd eq 'blink')
+		&& ($model eq "color"
+		|| $model eq "stripe"
+		|| !defined($model))))
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
 		return YeeLight_SelectSetCmd($hash, $list, $cmd, @val);
@@ -325,7 +337,8 @@ YeeLight_SelectSetCmd
   
 	my $cnt = @args;
 
-	if (lc $cmd eq 'on' || $cmd eq 'off')
+	# Commands supported by every yeelight
+	if (lc $cmd eq 'on' || lc $cmd eq 'off')
 	{
 		my $sCmd;
 		$sCmd->{'method'}		= "set_power";							# method:set_power
@@ -571,14 +584,18 @@ YeeLight_SelectSetCmd
 	
 	elsif (lc $cmd eq "scene")
 	{
-		if ($args[0] ne "sunset"
+		if ($cnt != 1
+			&& $args[0] ne "sunset"
 			&& $args[0] ne "sunrise"
-			&& $args[0] ne "happy_birthday")
+			&& $args[0] ne "happy_birthday"
+			&& $args[0] < 0
+			&& $args[0] > 9)
 		{
 			my $sceneList;
 			$sceneList .= "sunrise ";
 			$sceneList .= "sunset ";
 			$sceneList .= "happy_birthday ";
+			$sceneList .= "0-9 ";
 			return "Unknown scene. Choose from: $sceneList";
 		}
 		
@@ -598,14 +615,25 @@ YeeLight_SelectSetCmd
 
 		my @newArgs;
 		
-		if ($scene{$args[0]}{type} eq "start_cf")
+		if ($args[0] =~ /^\d?.?\d+$/ && $args[0] >= 0 && $args[0] <= 9)
 		{
-			push(@newArgs,$scene{$args[0]}{count});
+			my $bHash = $modules{YeeLightBridge}{defptr};
+			my $bName = $bHash->{NAME};
+			my $userSceneName = "userScene".$args[0];
+			my $userScene = undef;
+			$userScene = $attr{$bName}{$userSceneName} if defined($attr{$bName}{$userSceneName});
+			$userScene = $attr{$name}{$userSceneName} if defined($attr{$name}{$userSceneName});
+			return "scene \"".$args[0]."\" not set. Set attr userScene".$args[0]." first." if !defined($userScene);
+			my @cf = split(/ /,$userScene);
+			YeeLight_SelectSetCmd($hash,$list,"start_cf",@cf);
+		}
+		elsif ($scene{$args[0]}{type} eq "start_cf")
+		{
+			push(@newArgs,$scene{$args[0]}{count});	
 			push(@newArgs,$scene{$args[0]}{action});
 			push(@newArgs,$scene{$args[0]}{val});
+			YeeLight_SelectSetCmd($hash,$list,$scene{$args[0]}{type},@newArgs);
 		}
-		
-		YeeLight_SelectSetCmd($hash,$scene{$args[0]}{type},@newArgs);
 	}
 	
 	elsif (lc $cmd eq "start_cf")
@@ -1164,6 +1192,10 @@ YeeLight_Attr
 		{
 			return "Invalid parameter for $attrName. $attrName must be numeric and at least 60 or 0." if ($attrVal !~ /^\d?.?\d+$/) || (($attrVal < 60) && ($attrVal == 0));
 		}
+		elsif ($attrName =~ /userScene[0-9]/)
+		{
+			
+		}
 	}
 	
 	return undef;
@@ -1280,7 +1312,7 @@ YeeLightBridge_Parse
 	Log3 $name, 5, "$name (YeeLightBridge): $incData";
 	
 	my $sHash;
-	if ($incData =~ /NOTIFY/)
+	if ($incData =~ /NOTIFY/ || $incData =~ /HTTP\/1.1 200 OK/)
 	{
 		foreach my $data (split(/\r\n/,$incData))
 		{
@@ -1288,12 +1320,8 @@ YeeLightBridge_Parse
 			$sHash->{$d[0]} = $d[1];
 		}
 		
-		my $bHash = $modules{YeeLightBridge}{defptr};
-		my $bName = $bHash->{NAME};
 		my $updateIP = 1;
-		$updateIP = $attr{$bName}{updateIP} if ($attr{$bName}{updateIP});
 		$updateIP = $attr{$name}{updateIP} if ($attr{$name}{updateIP});
-		
 		
 		my $host = $sHash->{"Location"};
 		$host = substr($host,11,length($host)-11);
@@ -1303,6 +1331,7 @@ YeeLightBridge_Parse
 		if ($modules{YeeLight}{defptr}{$sHash->{"id"}})
 		{
 			$hash = $modules{YeeLight}{defptr}{$sHash->{"id"}};
+			$updateIP = $attr{$hash->{NAME}}{updateIP} if defined($attr{$hash->{NAME}}{updateIP});
 			YeeLightBridge_UpdateDev($hash,$sHash,$updateIP);
 			
 			return $hash->{NAME};
@@ -1310,6 +1339,7 @@ YeeLightBridge_Parse
 		elsif ($modules{YeeLight}{defptr}{$host})
 		{
 			$hash = $modules{YeeLight}{defptr}{$host};
+			$updateIP = $attr{$hash->{NAME}}{updateIP} if defined($attr{$hash->{NAME}}{updateIP});
 			if ($updateIP == 1)		# update IP true
 			{
 				$modules{YeeLight}{defptr}{$sHash->{"id"}} = $hash;
@@ -1326,6 +1356,7 @@ YeeLightBridge_Parse
 				$hash = $modules{YeeLight}{defptr}{$y};
 				if ($hash->{IP} eq $host)
 				{
+					$updateIP = $attr{$hash->{NAME}}{updateIP} if defined($attr{$hash->{NAME}}{updateIP});
 					if ($updateIP == 1)		# update IP true
 					{
 						$modules{YeeLight}{defptr}{$sHash->{"id"}} = $hash;
@@ -1455,7 +1486,12 @@ HSVtoRGB
 
 	if ($sat == 0) 
 	{
-		return int(($val * 2.55) +0.5), int(($val * 2.55) +0.5), int(($val * 2.55) +0.5);
+		my $r = int(($val * 2.55) + 0.5);
+		my $g = int(($val * 2.55) + 0.5);
+		my $b = int(($val * 2.55) + 0.5);
+		my $rgb = ($r * 256 * 256) + ($g * 256) + $b;
+	
+		return $rgb;
 	}
 	$hue %= 360;
 	$hue /= 60;
