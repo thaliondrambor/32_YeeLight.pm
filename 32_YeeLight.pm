@@ -78,7 +78,7 @@ YeeLight_Initialize
 		."updateIP:0,1 "
 		."timeout "
 		."keepAlive "
-		#."userScene[0-9] "
+		."userScene[0-9] "
 		."$readingFnAttributes";
 	
 	# Comm from Bridge
