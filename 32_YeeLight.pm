@@ -295,7 +295,7 @@ YeeLight_Set
 		|| lc $cmd eq 'flush')
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
-		return YeeLight_SelectSetCmd($hash, $list, $cmd, @val);
+		return YeeLight_SelectSetCmd($hash, $cmd, $list, @val);
 	}
 
 	return "Unknown argument $cmd, bearword as argument or wrong parameter(s), choose one of $list";
@@ -304,7 +304,7 @@ YeeLight_Set
 sub
 YeeLight_SelectSetCmd
 {
-	my ($hash, $list, $cmd, @args) = @_;
+	my ($hash, $cmd, $list, @args) = @_;
 	my $descriptor = '';
 	my $name = $hash->{NAME};
   
@@ -606,7 +606,7 @@ YeeLight_SelectSetCmd
 			push(@newArgs,$scene{$args[0]}{val});
 		}
 		
-		YeeLight_SelectSetCmd($hash,$list,$scene{$args[0]}{type},@newArgs);
+		YeeLight_SelectSetCmd($hash,$scene{$args[0]}{type},$list,@newArgs);
 	}
 	
 	elsif (lc $cmd eq "start_cf")
