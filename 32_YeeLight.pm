@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 32_YeeLight.pm 2016-12-26 thaliondrambor $
+# $Id: 32_YeeLight.pm 2016-12-30 thaliondrambor $
 
 ##### special thanks to herrmannj for permission to use code from 32_WifiLight.pm
 ##### currently in use: WifiLight_HSV2RGB
@@ -136,6 +136,41 @@ YeeLight_Define
 	
 	$modules{YeeLight}{defptr}{$hash->{ID}} = $hash;
 	
+	my $model;
+	$model = $hash->{MODEL} if defined($hash->{MODEL});
+	my $list = "";
+	# Commands supported by every yeelight
+	$list .= "on ";
+	$list .= "off ";
+	$list .= "toggle ";
+	$list .= "on-for-timer ";
+	$list .= "off-for-timer ";
+	$list .= "intervals ";
+	$list .= "bright ";
+	$list .= "dimup ";
+	$list .= "dimdown ";
+	$list .= "name ";
+	$list .= "default:noArg ";
+	$list .= "reopen:noArg ";
+	$list .= "statusrequest:noArg ";
+	# Commands supported by color and led stripe
+	if (($model eq "color") || ($model eq "stripe") || !defined($model))
+	{
+		$list .= "hsv ";
+		$list .= "hue ";
+		$list .= "sat ";
+		$list .= "rgb ";
+		$list .= "color ";
+		$list .= "ct ";
+		$list .= "start_cf ";
+		$list .= "stop_cf ";
+		$list .= "scene ";
+		$list .= "circlecolor:noArg ";
+		$list .= "blink ";
+	}
+	
+	$hash->{helper}->{CommandSet} = $list;
+	
 	return undef;
 }
 
@@ -143,11 +178,22 @@ sub
 YeeLight_Bridge_GetID
 {
 	my ($hash)	= @_;
-	my $curID	= 1;
-	$curID		= $data{YeeLightBridge}{msgID} if ($data{YeeLightBridge}{msgID});
-	$data{YeeLightBridge}{msgID} = 1 if !defined($data{YeeLightBridge}{msgID});
-	$data{YeeLightBridge}{msgID} = 1 if defined($data{YeeLightBridge}{msgID} >= 9999);
-	$data{YeeLightBridge}{msgID}++;
+	my $curID	= 0;
+	if (defined($modules{YeeLightBridge}{defptr}))
+	{
+		my $bHash 	= $modules{YeeLightBridge}{defptr};
+		$bHash->{msgID} = 0 if !defined($bHash->{msgID});
+		$bHash->{msgID} = 0 if defined($bHash->{msgID}) && ($bHash->{msgID} >= 9999);
+		$bHash->{msgID}++;
+		$curID = $bHash->{msgID}
+	}
+	else
+	{
+		$data{YeeLight}{msgID} = 0 if !defined($data{YeeLight}{msgID});
+		$data{YeeLight}{msgID} = 0 if defined($data{YeeLight}{msgID}) && ($data{YeeLight}{msgID} >= 9999);
+		$data{YeeLight}{msgID}++;
+		$curID = $data{YeeLight}{msgID}
+	}
 	return $curID;
 }
 
@@ -245,36 +291,8 @@ YeeLight_Set
     
     my ($hash, $name, $cmd, @val) = @_;
 	my $model = $hash->{MODEL};
-    
-	my $list = "";
-	# Commands supported by every yeelight
-	$list .= "on ";
-	$list .= "off ";
-	$list .= "toggle ";
-	$list .= "on-for-timer ";
-	$list .= "off-for-timer ";
-	$list .= "intervals ";
-	$list .= "bright ";
-	$list .= "dimup ";
-	$list .= "dimdown ";
-	$list .= "name ";
-	$list .= "default:noArg ";
-	$list .= "reopen:noArg ";
-	$list .= "statusrequest:noArg ";
-	# Commands supported by color and led stripe
-	if (($model eq "color") || ($model eq "stripe") || !defined($model))
-	{
-		$list .= "hsv ";
-		$list .= "hue ";
-		$list .= "sat ";
-		$list .= "rgb ";
-		$list .= "color ";
-		$list .= "ct ";
-		$list .= "start_cf ";
-		$list .= "stop_cf ";
-		$list .= "scene ";
-		$list .= "blink ";
-	}
+	
+	my $list = $hash->{helper}->{CommandSet};
 	
 	if (lc $cmd eq 'on'
 		|| lc $cmd eq 'off'
@@ -300,13 +318,14 @@ YeeLight_Set
 		|| lc $cmd eq 'start_cf'
 		|| lc $cmd eq 'stop_cf'
 		|| lc $cmd eq 'scene'
+		|| lc $cmd eq 'circlecolor'
 		|| lc $cmd eq 'blink')
 		&& ($model eq "color"
 		|| $model eq "stripe"
 		|| !defined($model))))
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
-		return YeeLight_SelectSetCmd($hash, $list, $cmd, @val);
+		return YeeLight_SelectSetCmd($hash, $cmd, @val);
 	}
 
 	return "Unknown argument $cmd, bearword as argument or wrong parameter(s), choose one of $list";
@@ -315,9 +334,11 @@ YeeLight_Set
 sub
 YeeLight_SelectSetCmd
 {
-	my ($hash, $list, $cmd, @args) = @_;
+	my ($hash, $cmd, @args) = @_;
 	my $descriptor = '';
 	my $name = $hash->{NAME};
+	
+	my $list = $hash->{helper}->{CommandSet};
   
 	# remove descriptor from @args
 	for (my $i = $#args; $i >= 0; --$i )
@@ -336,10 +357,11 @@ YeeLight_SelectSetCmd
 	}
   
 	my $cnt = @args;
-
+	Log3 $name, 5, "$name: Kommando wird ausgeführt. ($cmd).";
 	# Commands supported by every yeelight
 	if (lc $cmd eq 'on' || lc $cmd eq 'off')
 	{
+		Log3 $name, 5, "$name: ein oder aus";
 		my $sCmd;
 		$sCmd->{'method'}		= "set_power";							# method:set_power
 		$sCmd->{'params'}->[0]	= $cmd;									# on/off
@@ -625,14 +647,14 @@ YeeLight_SelectSetCmd
 			$userScene = $attr{$name}{$userSceneName} if defined($attr{$name}{$userSceneName});
 			return "scene \"".$args[0]."\" not set. Set attr userScene".$args[0]." first." if !defined($userScene);
 			my @cf = split(/ /,$userScene);
-			YeeLight_SelectSetCmd($hash,$list,"start_cf",@cf);
+			YeeLight_SelectSetCmd($hash,"start_cf",@cf);
 		}
 		elsif ($scene{$args[0]}{type} eq "start_cf")
 		{
 			push(@newArgs,$scene{$args[0]}{count});	
 			push(@newArgs,$scene{$args[0]}{action});
 			push(@newArgs,$scene{$args[0]}{val});
-			YeeLight_SelectSetCmd($hash,$list,$scene{$args[0]}{type},@newArgs);
+			YeeLight_SelectSetCmd($hash,$scene{$args[0]}{type},@newArgs);
 		}
 	}
 	
@@ -781,7 +803,15 @@ YeeLight_SelectSetCmd
 		
 		YeeLight_SendCmd($hash,$sCmd,$cmd);
 	}
-
+	
+	elsif (lc $cmd eq "circlecolor")
+	{
+		my $sCmd;
+		$sCmd->{'method'} = "set_adjust";
+		$sCmd->{'params'}->[0] = "circle";
+		$sCmd->{'params'}->[1] = "color";
+	}
+	
 	else
 	{
 		return SetExtensions($hash, $list, $name, $cmd, @args);
@@ -1266,6 +1296,7 @@ YeeLight_IsOn
 	my ($hash) = @_;
 	my $name = $hash->{NAME};
 
+	Log3 $name, 5, "$name: YeeLight_IsOn";
 	YeeLight_SelectSetCmd($hash,"on") if ($hash->{READINGS}{power}{VAL} eq "off");
 	return undef;
 }
