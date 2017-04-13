@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 32_YeeLight.pm 2016-12-30 thaliondrambor $
+# $Id: 32_YeeLight.pm 2017-04-13 thaliondrambor $
 
 ##### special thanks to herrmannj for permission to use code from 32_WifiLight.pm
 ##### currently in use: WifiLight_HSV2RGB
@@ -38,6 +38,7 @@
 # 11 bugfix for ramp = 0 with defaultramp set
 #    bugfix for bug with scene command
 # 12 added attribut userScene[0-9], started to add model of lamp
+# 13 added devStateIcon and webCmd, changed from JSON::XS to JSON
 
 # verbose level
 # 0: quit
@@ -47,7 +48,7 @@
 # 4: 1st technical level (detailed internal reporting)
 # 5: 2nd technical level (full internal reporting)
 #
-# installed CPAN modules: JSON::XS
+# installed CPAN modules: JSON
 
 package main;
 
@@ -55,8 +56,9 @@ use strict;
 use warnings;
 use POSIX;
 use Socket;
-use JSON::XS;
+use JSON;
 use SetExtensions;
+use Color;
 
 sub
 YeeLight_Initialize
@@ -86,6 +88,8 @@ YeeLight_Initialize
 	
 	$hash->{ParseFn}		= "YeeLightBridge_Parse";
 
+	FHEM_colorpickerInit();
+	
 	return undef;
 }
 
@@ -111,12 +115,12 @@ YeeLight_Define
 	
 	Log3 $name, 3, "YeeLight $name defined at $hash->{HOST}:$hash->{PORT}";
 	
-	$attr{$name}{room} = "YeeLight" if !defined( $attr{$name}{room});
+	$attr{$name}{room}			= "YeeLight" if !defined( $attr{$name}{room});
         
 	my $dev = $hash->{HOST}.':'.$hash->{PORT};
 	$hash->{DeviceName} = $dev;
 	$hash->{DEF}		= $hash->{HOST};
-	
+			
 	DevIo_OpenDev($hash, 0,, sub(){ 
 		my ($hash, $err) = @_;
 		Log3 $name, 2, "$name: $err" if($err);
@@ -138,6 +142,11 @@ YeeLight_Define
 	
 	my $model;
 	$model = $hash->{MODEL} if defined($hash->{MODEL});
+	$attr{$name}{devStateIcon}	= '{Color::devStateIcon($name,"rgb","bright","power")}'	if (!defined($attr{$name}{devStateIcon}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
+	$attr{$name}{webCmd}		= 'rgb:rgb ff0000:rgb 00ff00:rgb 0000ff:on:off'			if (!defined($attr{$name}{webCmd}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
+	$attr{$name}{devStateIcon}	= '{Color::devStateIcon($name,undef,"bright","power")}'	if (!defined($attr{$name}{devStateIcon}) && ($model eq "mono"));
+	$attr{$name}{webCmd}		= 'pct:toggle:on:off'									if (!defined($attr{$name}{webCmd}) && ($model eq "mono"));
+
 	my $list = "";
 	# Commands supported by every yeelight
 	$list .= "on ";
@@ -167,6 +176,11 @@ YeeLight_Define
 		$list .= "scene ";
 		$list .= "circlecolor:noArg ";
 		$list .= "blink ";
+		$list .= "rgb:colorpicker,RGB";
+	}
+	elsif ($model eq "mono")
+	{
+		$list .= "pct:colorpicker,BRI,0,1,100"
 	}
 	
 	$hash->{helper}->{CommandSet} = $list;
