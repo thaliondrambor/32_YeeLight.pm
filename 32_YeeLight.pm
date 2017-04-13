@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 32_YeeLight.pm 2017-04-13 thaliondrambor $
+# $Id: 32_YeeLight.pm 2016-04-13 thaliondrambor $
 
 ##### special thanks to herrmannj for permission to use code from 32_WifiLight.pm
 ##### currently in use: WifiLight_HSV2RGB
@@ -38,7 +38,7 @@
 # 11 bugfix for ramp = 0 with defaultramp set
 #    bugfix for bug with scene command
 # 12 added attribut userScene[0-9], started to add model of lamp
-# 13 added devStateIcon and webCmd, changed from JSON::XS to JSON
+# 13 added devStateIcon, webCmd and widgetOverride, changed from JSON::XS to JSON
 
 # verbose level
 # 0: quit
@@ -142,10 +142,12 @@ YeeLight_Define
 	
 	my $model;
 	$model = $hash->{MODEL} if defined($hash->{MODEL});
-	$attr{$name}{devStateIcon}	= '{Color::devStateIcon($name,"rgb","bright","power")}'	if (!defined($attr{$name}{devStateIcon}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
-	$attr{$name}{webCmd}		= 'rgb:rgb ff0000:rgb 00ff00:rgb 0000ff:on:off'			if (!defined($attr{$name}{webCmd}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
-	$attr{$name}{devStateIcon}	= '{Color::devStateIcon($name,undef,"bright","power")}'	if (!defined($attr{$name}{devStateIcon}) && ($model eq "mono"));
-	$attr{$name}{webCmd}		= 'pct:toggle:on:off'									if (!defined($attr{$name}{webCmd}) && ($model eq "mono"));
+	$attr{$name}{devStateIcon}	= '{Color::devStateIcon($name,"rgb","bright","power")}'									if (!defined($attr{$name}{devStateIcon}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
+	$attr{$name}{webCmd}		= 'rgb:bright:ct:rgb ffffff:rgb ff0000:rgb 00ff00:rgb 0000ff:on:off'					if (!defined($attr{$name}{webCmd}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
+	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100 ct:colorpicker,CT,1700,10,6500 rgb:colorpicker,RGB'	if (!defined($attr{$name}{widgetOverride}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
+	$attr{$name}{devStateIcon}	= '{Color::devStateIcon($name,undef,"bright","power")}'									if (!defined($attr{$name}{devStateIcon}) && ($model eq "mono"));
+	$attr{$name}{webCmd}		= 'bright:on:off'																		if (!defined($attr{$name}{webCmd}) && ($model eq "mono"));
+	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100'														if (!defined($attr{$name}{widgetOverride}) && ($model eq "mono"));
 
 	my $list = "";
 	# Commands supported by every yeelight
@@ -176,11 +178,6 @@ YeeLight_Define
 		$list .= "scene ";
 		$list .= "circlecolor:noArg ";
 		$list .= "blink ";
-		$list .= "rgb:colorpicker,RGB";
-	}
-	elsif ($model eq "mono")
-	{
-		$list .= "pct:colorpicker,BRI,0,1,100"
 	}
 	
 	$hash->{helper}->{CommandSet} = $list;
