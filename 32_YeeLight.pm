@@ -142,10 +142,10 @@ YeeLight_Define
 	
 	my $model;
 	$model = $hash->{MODEL} if defined($hash->{MODEL});
-	$attr{$name}{devStateIcon}	= '{Color::devStateIcon($name,"rgb","bright","power")}'									if (!defined($attr{$name}{devStateIcon}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
+	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");my $mode=ReadingsVal($name,"color_mode","RGB");if($power eq "off"){Color::devStateIcon($name,"rgb","rgb","power");}else{if($mode eq "RGB"){Color::devStateIcon($name,"rgb","rgb","bright");}elsif($mode eq "color temperature"){Color::devStateIcon($name,"rgb",undef,"bright");}}}' if (!defined($attr{$name}{devStateIcon}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
 	$attr{$name}{webCmd}		= 'rgb:bright:ct:rgb ffffff:rgb ff0000:rgb 00ff00:rgb 0000ff:on:off'					if (!defined($attr{$name}{webCmd}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
 	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100 ct:colorpicker,CT,1700,10,6500 rgb:colorpicker,RGB'	if (!defined($attr{$name}{widgetOverride}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
-	$attr{$name}{devStateIcon}	= '{Color::devStateIcon($name,undef,"bright","power")}'									if (!defined($attr{$name}{devStateIcon}) && ($model eq "mono"));
+	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");if($power eq "off"){Color::devStateIcon($name,"dimmer",undef,"power")else{Color::devStateIcon($name,"dimmer",undef,"bright")}}' if (!defined($attr{$name}{devStateIcon}) && ($model eq "mono"));
 	$attr{$name}{webCmd}		= 'bright:on:off'																		if (!defined($attr{$name}{webCmd}) && ($model eq "mono"));
 	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100'														if (!defined($attr{$name}{widgetOverride}) && ($model eq "mono"));
 
