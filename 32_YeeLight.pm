@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 32_YeeLight.pm 2016-04-13 thaliondrambor $
+# $Id: 32_YeeLight.pm 2016-05-01 thaliondrambor $
 
 ##### special thanks to herrmannj for permission to use code from 32_WifiLight.pm
 ##### currently in use: WifiLight_HSV2RGB
@@ -39,6 +39,7 @@
 #    bugfix for bug with scene command
 # 12 added attribut userScene[0-9], started to add model of lamp
 # 13 added devStateIcon, webCmd and widgetOverride, changed from JSON::XS to JSON
+# 14 fixed some errors
 
 # verbose level
 # 0: quit
@@ -145,10 +146,9 @@ YeeLight_Define
 	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");my $mode=ReadingsVal($name,"color_mode","RGB");if($power eq "off"){Color::devStateIcon($name,"rgb","rgb","power");}else{if($mode eq "RGB"){Color::devStateIcon($name,"rgb","rgb","bright");}elsif($mode eq "color temperature"){Color::devStateIcon($name,"rgb",undef,"bright");}}}' if (!defined($attr{$name}{devStateIcon}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
 	$attr{$name}{webCmd}		= 'rgb:bright:ct:rgb ffffff:rgb ff0000:rgb 00ff00:rgb 0000ff:on:off'					if (!defined($attr{$name}{webCmd}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
 	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100 ct:colorpicker,CT,1700,10,6500 rgb:colorpicker,RGB'	if (!defined($attr{$name}{widgetOverride}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
-	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");if($power eq "off"){Color::devStateIcon($name,"dimmer",undef,"power");}else{Color::devStateIcon($name,"dimmer",undef,"bright")}}' if (!defined($attr{$name}{devStateIcon}) && ($model eq "mono"));
+	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");if($power eq "off"){Color::devStateIcon($name,"dimmer",undef,"power");}else{Color::devStateIcon($name,"dimmer",undef,"bright")}}' if (!defined($attr{$name}{devStateIcon}) && defined($model) && ($model eq "mono" || $model eq "desklamp"));
 	$attr{$name}{webCmd}		= 'bright:on:off'																		if (!defined($attr{$name}{webCmd}) && ($model eq "mono"));
-	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100'														if (!defined($attr{$name}{widgetOverride}) && ($model eq "mono"));
-
+	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100'														if (!defined($attr{$name}{widgetOverride}) && defined($model) && ($model eq "mono" || $model eq "desklamp"));
 	my $list = "";
 	# Commands supported by every yeelight
 	$list .= "on ";
@@ -331,9 +331,9 @@ YeeLight_Set
 		|| lc $cmd eq 'scene'
 		|| lc $cmd eq 'circlecolor'
 		|| lc $cmd eq 'blink')
-		&& ($model eq "color"
+		&& (!defined($model)
 		|| $model eq "stripe"
-		|| !defined($model))))
+		|| $model eq "color")))
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
 		return YeeLight_SelectSetCmd($hash, $cmd, @val);
@@ -442,13 +442,16 @@ YeeLight_SelectSetCmd
 			
 			YeeLight_SendCmd($hash,$sCmd,$cmd,2);
 		}
-		elsif ($args[0] == 0 && $args[1] == 0 && $args[2] == 0 && (@args == 3 || @args == 4))
+		elsif ((@args == 3 || @args == 4) && ($args[0] =~ /^[0-9]+/ && $args[1] =~ /^[0-9]+/ && $args[2] =~ /^[0-9]+/))
 		{
-			$sCmd->{'method'}		= "set_power";
-			$sCmd->{'params'}->[0]	= "off";
-			$sCmd->{'params'}->[2]	= $args[3] if ($args[3]);
+			if ($args[0] == 0 && $args[1] == 0 && $args[2] == 0)
+			{
+				$sCmd->{'method'}		= "set_power";
+				$sCmd->{'params'}->[0]	= "off";
+				$sCmd->{'params'}->[2]	= $args[3] if ($args[3]);
 			
-			YeeLight_SendCmd($hash,$sCmd,$cmd,2);
+				YeeLight_SendCmd($hash,$sCmd,$cmd,2);
+			}
 		}
 		else
 		{
@@ -840,7 +843,7 @@ YeeLight_SendCmd
 	my $bHash		= $modules{YeeLightBridge}{defptr};
 	my $bName		= $bHash->{NAME};
 	my $defaultRamp = 0;
-	$defaultRamp	= $attr{$bName}{defaultramp} if ($attr{$bName}{defaultramp});
+	$defaultRamp	= $attr{$bName}{defaultramp} if (defined($bName) && $attr{$bName}{defaultramp});
 	$defaultRamp	= $attr{$name}{defaultramp} if ($attr{$name}{defaultramp});
 	
 	if (lc $cmd eq "name"
@@ -987,8 +990,8 @@ Add_SendQue
 	my $bHash = $modules{YeeLightBridge}{defptr};
 	my $bName = $bHash->{NAME};
 	my $timeout	= 3;
-	$timeout	= $attr{$bName}{timeout} if $attr{$bName}{timeout};
-	$timeout	= $attr{$name}{timeout} if $attr{$name}{timeout};
+	$timeout	= $attr{$bName}{timeout} if (defined($bName) && $attr{$bName}{timeout});
+	$timeout	= $attr{$name}{timeout} if ($attr{$name}{timeout});
 	if ($timeout != 0)
 	{
 		RemoveInternalTimer($hash,"YeeLight_IsReachable");
