@@ -40,6 +40,7 @@
 # 12 added attribut userScene[0-9], started to add model of lamp
 # 13 added devStateIcon, webCmd and widgetOverride, changed from JSON::XS to JSON
 # 14 fixed some errors
+# 15 optional parameter for define: model
 
 # verbose level
 # 0: quit
@@ -101,8 +102,9 @@ YeeLight_Define
 	my @a = split("[ \t][ \t]*", $def); 
 	my $name = $a[0];
 	
-	return "wrong syntax: define [NAME] YeeLight [IP]" if (@a != 3 ) && (@a != 4);
+	return "wrong syntax: define [NAME] YeeLight [IP] <MODEL>" if (@a != 3 ) && (@a != 4) && (@a != 5);
 	return "wrong input for IP-address: 'xxx.xxx.xxx.xxx' (0 <= xxx <= 255)" if (!IsValidIP($a[2]));
+	return "wrong input for model: choose one of color, stripe, mono, desklamp" if (@a >= 4) && ($a[3] ne "color") && ($a[3] ne "stripe") && ($a[3] ne "mono") && ($a[3] ne "desklamp");
 	
 	DevIo_CloseDev($hash);
 	
@@ -111,8 +113,9 @@ YeeLight_Define
     $hash->{PORT}				= 55443;
     $hash->{PROTO}				= 1;
 	$hash->{NOTIFYDEV}			= "global";
-	$hash->{ID}					= $a[2] if (!$a[3]);
-	$hash->{ID}					= $a[3] if ($a[3]);
+	$hash->{MODEL}				= $a[3] if defined($a[3]);
+	$hash->{ID}					= $a[2] if (!$a[4]);
+	$hash->{ID}					= $a[4] if ($a[4]);
 	
 	Log3 $name, 3, "YeeLight $name defined at $hash->{HOST}:$hash->{PORT}";
 	
@@ -144,10 +147,10 @@ YeeLight_Define
 	my $model;
 	$model = $hash->{MODEL} if defined($hash->{MODEL});
 	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");my $mode=ReadingsVal($name,"color_mode","RGB");if($power eq "off"){Color::devStateIcon($name,"rgb","rgb","power");}else{if($mode eq "RGB"){Color::devStateIcon($name,"rgb","rgb","bright");}elsif($mode eq "color temperature"){Color::devStateIcon($name,"rgb",undef,"bright");}}}' if (!defined($attr{$name}{devStateIcon}) && (!defined($model) || ($model eq "color") || ($model eq "stripe")));
-	$attr{$name}{webCmd}		= 'rgb:bright:ct:rgb ffffff:rgb ff0000:rgb 00ff00:rgb 0000ff:on:off'					if (!defined($attr{$name}{webCmd}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
-	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100 ct:colorpicker,CT,1700,10,6500 rgb:colorpicker,RGB'	if (!defined($attr{$name}{widgetOverride}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
+	$attr{$name}{webCmd}		= 'rgb:bright:ct:rgb ffffff:rgb ff0000:rgb 00ff00:rgb 0000ff:on:off'					if (!defined($attr{$name}{webCmd}) && (!defined($model) || ($model eq "color") || ($model eq "stripe")));
+	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100 ct:colorpicker,CT,1700,10,6500 rgb:colorpicker,RGB'	if (!defined($attr{$name}{widgetOverride}) && (!defined($model) || ($model eq "color") || ($model eq "stripe")));
 	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");if($power eq "off"){Color::devStateIcon($name,"dimmer",undef,"power");}else{Color::devStateIcon($name,"dimmer",undef,"bright")}}' if (!defined($attr{$name}{devStateIcon}) && defined($model) && ($model eq "mono" || $model eq "desklamp"));
-	$attr{$name}{webCmd}		= 'bright:on:off'																		if (!defined($attr{$name}{webCmd}) && ($model eq "mono"));
+	$attr{$name}{webCmd}		= 'bright:on:off'																		if (!defined($attr{$name}{webCmd}) && defined($model) && ($model eq "mono" || $model eq "desklamp"));
 	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100'														if (!defined($attr{$name}{widgetOverride}) && defined($model) && ($model eq "mono" || $model eq "desklamp"));
 	my $list = "";
 	# Commands supported by every yeelight
@@ -1166,10 +1169,17 @@ YeeLight_ParseStatusRequest
 	my $name = $hash->{NAME};
 
 	my $rgb		= $answer->{'result'}->[3];
-	my $hexrgb	= sprintf("%06x",$rgb);
-	my $b		= $rgb % 256;
-	my $g		= (($rgb - $b) / 256) % 256;
-	my $r		= ($rgb - $b - ($g * 256)) / (256 * 256);
+	my $hexrgb;
+	my $b;
+	my $g;
+	my $r;
+	if ($rgb ne "")
+	{
+		$hexrgb	= sprintf("%06x",$rgb);
+		$b		= $rgb % 256;
+		$g		= (($rgb - $b) / 256) % 256;
+		$r		= ($rgb - $b - ($g * 256)) / (256 * 256);
+	}
 	my $colormode;
 	my $colorflow;
 	my $musicmode;
@@ -1417,7 +1427,7 @@ YeeLightBridge_Parse
 		my $newName = "YeeLight_".$sHash->{"id"};
 		$newName	= "YeeLight_".$sHash->{"name"} if ($sHash->{"name"});
 		
-		return "UNDEFINED ".$newName." YeeLight ".$host." ".$sHash->{"id"};
+		return "UNDEFINED ".$newName." YeeLight ".$sHash->{"model"}." ".$host." ".$sHash->{"id"};
 	}	
 }
 
