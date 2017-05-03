@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 32_YeeLight.pm 2016-05-01 thaliondrambor $
+# $Id: 32_YeeLight.pm 2016-05-03 thaliondrambor $
 
 ##### special thanks to herrmannj for permission to use code from 32_WifiLight.pm
 ##### currently in use: WifiLight_HSV2RGB
@@ -143,7 +143,7 @@ YeeLight_Define
 	
 	my $model;
 	$model = $hash->{MODEL} if defined($hash->{MODEL});
-	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");my $mode=ReadingsVal($name,"color_mode","RGB");if($power eq "off"){Color::devStateIcon($name,"rgb","rgb","power");}else{if($mode eq "RGB"){Color::devStateIcon($name,"rgb","rgb","bright");}elsif($mode eq "color temperature"){Color::devStateIcon($name,"rgb",undef,"bright");}}}' if (!defined($attr{$name}{devStateIcon}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
+	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");my $mode=ReadingsVal($name,"color_mode","RGB");if($power eq "off"){Color::devStateIcon($name,"rgb","rgb","power");}else{if($mode eq "RGB"){Color::devStateIcon($name,"rgb","rgb","bright");}elsif($mode eq "color temperature"){Color::devStateIcon($name,"rgb",undef,"bright");}}}' if (!defined($attr{$name}{devStateIcon}) && (!defined($model) || ($model eq "color") || ($model eq "stripe")));
 	$attr{$name}{webCmd}		= 'rgb:bright:ct:rgb ffffff:rgb ff0000:rgb 00ff00:rgb 0000ff:on:off'					if (!defined($attr{$name}{webCmd}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
 	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100 ct:colorpicker,CT,1700,10,6500 rgb:colorpicker,RGB'	if (!defined($attr{$name}{widgetOverride}) && (($model eq "color") || ($model eq "stripe") || !defined($model)));
 	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");if($power eq "off"){Color::devStateIcon($name,"dimmer",undef,"power");}else{Color::devStateIcon($name,"dimmer",undef,"bright")}}' if (!defined($attr{$name}{devStateIcon}) && defined($model) && ($model eq "mono" || $model eq "desklamp"));
@@ -250,7 +250,7 @@ YeeLight_GetUpdate
 	my $bHash = $modules{YeeLightBridge}{defptr};
 	my $bName = $bHash->{NAME};
 	my $keepAlive	= 0;
-	$keepAlive		= $attr{$bName}{keepAlive} if defined($attr{$bName}{keepAlive});
+	$keepAlive		= $attr{$bName}{keepAlive} if (defined($bName) && defined($attr{$bName}{keepAlive}));
 	$keepAlive		= $attr{$name}{keepAlive} if defined($attr{$name}{keepAlive});
 	
 	if ($keepAlive != 0)
@@ -657,7 +657,7 @@ YeeLight_SelectSetCmd
 			my $bName = $bHash->{NAME};
 			my $userSceneName = "userScene".$args[0];
 			my $userScene = undef;
-			$userScene = $attr{$bName}{$userSceneName} if defined($attr{$bName}{$userSceneName});
+			$userScene = $attr{$bName}{$userSceneName} if (defined($bName) && defined($attr{$bName}{$userSceneName}));
 			$userScene = $attr{$name}{$userSceneName} if defined($attr{$name}{$userSceneName});
 			return "scene \"".$args[0]."\" not set. Set attr userScene".$args[0]." first." if !defined($userScene);
 			my @cf = split(/ /,$userScene);
