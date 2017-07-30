@@ -1330,6 +1330,7 @@ sub
 YeeLight_Ready
 {
 	my ($hash) = @_;
+	my $name = $hash->{NAME};
  
 	# Versuch eines Verbindungsaufbaus, sofern die Verbindung beendet ist.
 	return DevIo_OpenDev($hash, 1, undef, sub(){ 
