@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 32_YeeLight.pm 2016-05-03 thaliondrambor $
+# $Id: 32_YeeLight.pm 2017-07-30 thaliondrambor $
 
 ##### special thanks to herrmannj for permission to use code from 32_WifiLight.pm
 ##### currently in use: WifiLight_HSV2RGB
@@ -41,6 +41,7 @@
 # 13 added devStateIcon, webCmd and widgetOverride, changed from JSON::XS to JSON
 # 14 fixed some errors
 # 15 optional parameter for define: model
+# 16 fixed bugs blocking fhem when a lamp is not reachable, not able to set keepAlive to 0
 
 # verbose level
 # 0: quit
@@ -1244,7 +1245,7 @@ YeeLight_Attr
 		}
 		elsif ($attrName eq "keepAlive")
 		{
-			return "Invalid parameter for $attrName. $attrName must be numeric and at least 60 or 0." if ($attrVal !~ /^\d?.?\d+$/) || (($attrVal < 60) && ($attrVal == 0));
+			return "Invalid parameter for $attrName. $attrName must be numeric and at least 60 or 0." if ($attrVal !~ /^\d?.?\d+$/) || (($attrVal < 60) && ($attrVal != 0));
 		}
 		elsif ($attrName =~ /userScene[0-9]/)
 		{
@@ -1331,7 +1332,11 @@ YeeLight_Ready
 	my ($hash) = @_;
  
 	# Versuch eines Verbindungsaufbaus, sofern die Verbindung beendet ist.
-	return DevIo_OpenDev($hash, 1, undef ) if ( $hash->{STATE} eq "disconnected" );
+	return DevIo_OpenDev($hash, 1, undef, sub(){ 
+		my ($hash, $err) = @_;
+		Log3 $name, 2, "$name: $err" if($err);
+		return "$err" if($err);
+	}) if ( $hash->{STATE} eq "disconnected" );
 }
 
 sub
