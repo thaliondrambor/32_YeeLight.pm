@@ -1,11 +1,12 @@
 ##############################################
-# $Id: 32_YeeLightBridge.pm 2016-12-30 thaliondrambor $
+# $Id: 32_YeeLightBridge.pm 2017-07-30 thaliondrambor $
 #
 # versions
 # 00 start
 # 01 added timeout, keepAlive
 # 02 added Log at ReadFn
 # 03 search finally works, added attribut userScene[0-9]
+# 04 fixed bug, unable to set keepAlive attribut to 0
 #
 # verbose level
 # 0: quit
@@ -133,7 +134,7 @@ YeeLightBridge_Attr
 		}
 		elsif ($attrName eq "keepAlive")
 		{
-			return "Invalid parameter for $attrName. $attrName must be numeric and at least 60 or 0." if ($attrVal !~ /^\d?.?\d+$/) || (($attrVal < 60) && ($attrVal == 0));
+			return "Invalid parameter for $attrName. $attrName must be numeric and at least 60 or 0." if ($attrVal !~ /^\d?.?\d+$/) || (($attrVal < 60) && ($attrVal != 0));
 		}
 		elsif ($attrName =~ /userScene[0-9]/)
 		{
