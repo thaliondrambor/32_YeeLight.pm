@@ -41,7 +41,7 @@
 # 13 added devStateIcon, webCmd and widgetOverride, changed from JSON::XS to JSON
 # 14 fixed some errors
 # 15 optional parameter for define: model
-# 16 fixed bug blocking fhem when a lamp is not reachable
+# 16 fixed bugs blocking fhem when a lamp is not reachable, not able to set keepAlive to 0
 
 # verbose level
 # 0: quit
@@ -1245,7 +1245,7 @@ YeeLight_Attr
 		}
 		elsif ($attrName eq "keepAlive")
 		{
-			return "Invalid parameter for $attrName. $attrName must be numeric and at least 60 or 0." if ($attrVal !~ /^\d?.?\d+$/) || (($attrVal < 60) && ($attrVal == 0));
+			return "Invalid parameter for $attrName. $attrName must be numeric and at least 60 or 0." if ($attrVal !~ /^\d?.?\d+$/) || (($attrVal < 60) && ($attrVal != 0));
 		}
 		elsif ($attrName =~ /userScene[0-9]/)
 		{
