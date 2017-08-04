@@ -1,0 +1,4 @@
+YeeLight last change:
+2017-08-02
+   - bugfix: attr keepAlive couldn't be set to "0"
+   - bugfix: reconnect to not reachable lamp blocked fhem
