@@ -104,7 +104,7 @@ YeeLight_Define
 	my $name = $a[0];
 	
 	return "wrong syntax: define [NAME] YeeLight [IP] <MODEL>" if (@a != 3 ) && (@a != 4) && (@a != 5);
-	return "wrong input for IP-address: 'xxx.xxx.xxx.xxx' (0 <= xxx <= 255)" if (!IsValidIP($a[2]));
+	#return "wrong input for IP-address: 'xxx.xxx.xxx.xxx' (0 <= xxx <= 255)" if (!IsValidIP($a[2]));
 	return "wrong input for model: choose one of color, stripe, mono, desklamp" if (@a >= 4) && ($a[3] ne "color") && ($a[3] ne "stripe") && ($a[3] ne "mono") && ($a[3] ne "desklamp");
 	
 	DevIo_CloseDev($hash);
