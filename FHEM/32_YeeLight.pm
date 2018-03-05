@@ -84,6 +84,7 @@ YeeLight_Initialize
 		."timeout "
 		."keepAlive "
 		."userScene[0-9] "
+		."autoConnect:1,0 "
 		."$readingFnAttributes";
 	
 	# Comm from Bridge
@@ -1337,7 +1338,7 @@ YeeLight_Ready
 		my ($hash, $err) = @_;
 		Log3 $name, 2, "$name: $err" if($err);
 		return "$err" if($err);
-	}) if ( $hash->{STATE} eq "disconnected" );
+	}) if ( $hash->{STATE} eq "disconnected" ) && ( AttrVal( $name, "autoConnect", 1 ) );
 }
 
 sub
