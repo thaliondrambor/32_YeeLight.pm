@@ -168,6 +168,7 @@ YeeLight_Define
 	$list .= "name ";
 	$list .= "default:noArg ";
 	$list .= "reopen:noArg ";
+	$list .= "close:noArg ";
 	$list .= "statusrequest:noArg ";
 	# Commands supported by color and led stripe
 	if (($model eq "color") || ($model eq "stripe") || !defined($model))
@@ -322,6 +323,7 @@ YeeLight_Set
 		|| lc $cmd eq 'name'
 		|| lc $cmd eq 'default'
 		|| lc $cmd eq 'reopen'
+		|| lc $cmd eq 'close'
 		|| lc $cmd eq 'statusrequest'
 		|| lc $cmd eq 'raw'
 		|| lc $cmd eq 'flush'
@@ -347,7 +349,7 @@ YeeLight_Set
 	return "Unknown argument $cmd, bearword as argument or wrong parameter(s), choose one of $list";
 }
 
-sub
+sub 
 YeeLight_SelectSetCmd
 {
 	my ($hash, $cmd, @args) = @_;
@@ -366,7 +368,7 @@ YeeLight_SelectSetCmd
 		}
 	}
 	
-	if ($hash->{STATE} ne "opened" && lc $cmd ne 'reopen')
+	if ($hash->{STATE} ne "opened" && lc $cmd ne 'reopen' && lc $cmd ne 'close')
 	{
 		Log3 $name, 3, "$name can't send $cmd ".join(" ", @args)." with state \"$hash->{STATE}".
 		return "Can't send command if bulb is not connected. Try \"reopen\" and check, if bulb is powered. Current state is $hash->{STATE}";
@@ -739,11 +741,18 @@ YeeLight_SelectSetCmd
 	elsif (lc $cmd eq "reopen")
 	{
 		DevIo_CloseDev($hash);
-		DevIo_OpenDev($hash, 0,, sub(){
+		$hash->{DevIoJustClosed} = 0;
+		DevIo_OpenDev($hash, 1,, sub(){
 			my ($hash, $err) = @_;
 			Log3 $name, 2, "$name: $err" if($err);
 		});
 		Log3 $name, 3, "$name: reconnected.";
+	}
+	
+	elsif (lc $cmd eq "close")
+	{
+		DevIo_Disconnected($hash);
+		Log3 $name, 3, "$name: close.";
 	}
 	
 	elsif (lc $cmd eq "raw")											# Answer won't be deleted in AnsQue
@@ -1338,7 +1347,7 @@ YeeLight_Ready
 		my ($hash, $err) = @_;
 		Log3 $name, 2, "$name: $err" if($err);
 		return "$err" if($err);
-	}) if ( $hash->{STATE} eq "disconnected" ) && ( AttrVal( $name, "autoConnect", 1 ) );
+	}) if ( $hash->{STATE} eq "disconnected" ) && AttrVal( $name, "autoConnect", 1 );
 }
 
 sub
@@ -1466,7 +1475,7 @@ YeeLightBridge_UpdateDev
 	my $r			= ($rgb - $b - ($g * 256)) / (256 * 256);
 	my $hue			= $mcHash->{"hue"};
 	my $sat			= $mcHash->{"sat"};
-	my $bulbName	= $mcHash->{"name"};
+	my $bulbName	= defined($mcHash->{"name"}) ? $mcHash->{"name"} : "<noname>";
 	
 	if ($updateIP == 1)	# update IP true
 	{
@@ -1478,7 +1487,7 @@ YeeLightBridge_UpdateDev
 	$hash->{MODEL}				= $model			if !($hash->{MODEL}) || ($hash->{MODEL} ne $model);
 	$hash->{FW_VER}				= $fw_ver			if !($hash->{FW_VER}) || ($hash->{FW_VER} ne $fw_ver);
 	$hash->{helper}->{support}	= $support			if !($hash->{helper}->{support}) || ($hash->{helper}->{support} ne $support);
-	
+
 	readingsBeginUpdate($hash);
 		readingsBulkUpdateIfChanged($hash,"power",$power);
 		readingsBulkUpdateIfChanged($hash,"bright",$bright);
