@@ -173,7 +173,7 @@ YeeLight_Define
     $list .= "close:noArg ";
     $list .= "statusrequest:noArg ";
     # Commands supported by color and led stripe
-    if (($model eq "color") || ($model eq "stripe") || !defined($model))
+    if (!defined($model) || ($model eq "color") || ($model eq "stripe"))
     {
         $list .= "hsv ";
         $list .= "hue ";
@@ -1518,6 +1518,13 @@ YeeLightBridge_UpdateDev
         readingsBulkUpdateIfChanged($hash,"name",$bulbName);
     readingsEndUpdate($hash,1);
     
+    # we received data from the device so let's guess its alive
+    if ( ( $hash->{STATE} eq "disconnected" ) && AttrVal( $name, "autoConnect", 1 ) ) {
+        DevIo_CloseDev($hash);
+        $hash->{DevIoJustClosed} = 0;
+        YeeLight_Open($hash, 1);
+    }
+        
     return undef;
 }
 
