@@ -9,6 +9,7 @@
 # TODO
 # light functions: timer, schedules
 # scenes
+# autodetect model
 # software bridge (UDP): search request
 
 # help
@@ -105,7 +106,7 @@ YeeLight_Define
 	
 	return "wrong syntax: define [NAME] YeeLight [IP] <MODEL>" if (@a != 3 ) && (@a != 4) && (@a != 5);
 	return "wrong input for IP-address: 'xxx.xxx.xxx.xxx' (0 <= xxx <= 255)" if (!IsValidIP($a[2]));
-	return "wrong input for model: choose one of color, stripe, mono, desklamp" if (@a >= 4) && ($a[3] ne "color") && ($a[3] ne "stripe") && ($a[3] ne "mono") && ($a[3] ne "desklamp");
+	return "wrong input for model: choose one of color, stripe, mono, desklamp, ceiling1" if (@a >= 4) && ($a[3] ne "color") && ($a[3] ne "stripe") && ($a[3] ne "mono") && ($a[3] ne "desklamp") && ($a[3] ne "ceiling1");
 	
 	DevIo_CloseDev($hash);
 	
@@ -125,6 +126,7 @@ YeeLight_Define
 	my $dev = $hash->{HOST}.':'.$hash->{PORT};
 	$hash->{DeviceName} = $dev;
 	$hash->{DEF}		= $hash->{HOST};
+	$hash->{DEF}		= $hash->{HOST} . " " . $hash->{MODEL} if defined($hash->{MODEL});
 			
 	DevIo_OpenDev($hash, 0,, sub(){ 
 		my ($hash, $err) = @_;
@@ -153,6 +155,9 @@ YeeLight_Define
 	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");if($power eq "off"){Color::devStateIcon($name,"dimmer",undef,"power");}else{Color::devStateIcon($name,"dimmer",undef,"bright")}}' if (!defined($attr{$name}{devStateIcon}) && defined($model) && ($model eq "mono" || $model eq "desklamp"));
 	$attr{$name}{webCmd}		= 'bright:on:off'																		if (!defined($attr{$name}{webCmd}) && defined($model) && ($model eq "mono" || $model eq "desklamp"));
 	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100'														if (!defined($attr{$name}{widgetOverride}) && defined($model) && ($model eq "mono" || $model eq "desklamp"));
+	$attr{$name}{devStateIcon}	= '{my $power=ReadingsVal($name,"power","off");if($power eq "off"){Color::devStateIcon($name,"dimmer",undef,"power");}else{Color::devStateIcon($name,"dimmer",undef,"bright")}}' if (!defined($attr{$name}{devStateIcon}) && defined($model) && ($model eq "ceiling1"));
+	$attr{$name}{webCmd}		= 'bright:on:off:ct'																	if (!defined($attr{$name}{webCmd}) && defined($model) && ($model eq "ceiling1"));
+	$attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100 ct:colorpicker,CT,2700,10,6500'						if (!defined($attr{$name}{widgetOverride}) && defined($model) && ($model eq "ceiling1"));
 	my $list = "";
 	# Commands supported by every yeelight
 	$list .= "on ";
@@ -176,12 +181,21 @@ YeeLight_Define
 		$list .= "sat ";
 		$list .= "rgb ";
 		$list .= "color ";
-		$list .= "ct ";
 		$list .= "start_cf ";
 		$list .= "stop_cf ";
 		$list .= "scene ";
 		$list .= "circlecolor:noArg ";
 		$list .= "blink ";
+	}
+	# Commands supported by ceiling1
+	if (($model eq "ceiling1") || !defined($model))
+	{
+		$list .= "active_mode:daylight,nightlight ";
+	}
+	# Commands supported by color, led stripe and ceiling1
+	if (($model eq "color") || ($model eq "stripe") || ($model eq "ceiling1") || !defined($model))
+	{
+		$list .= "ct ";
 	}
 	
 	$hash->{helper}->{CommandSet} = $list;
@@ -308,7 +322,7 @@ YeeLight_Set
 	my $model = $hash->{MODEL};
 	
 	my $list = $hash->{helper}->{CommandSet};
-	
+
 	if (lc $cmd eq 'on'
 		|| lc $cmd eq 'off'
 		|| lc $cmd eq 'toggle'
@@ -324,12 +338,16 @@ YeeLight_Set
 		|| lc $cmd eq 'statusrequest'
 		|| lc $cmd eq 'raw'
 		|| lc $cmd eq 'flush'
-		|| ((lc $cmd eq 'hsv'
-		|| lc $cmd eq 'hue'
+		|| ((lc $cmd eq 'ct'
+		&& (!defined($model))
+		|| $model eq "stripe"
+		|| $model eq "color"
+		|| $model eq "ceiling1"))
+		|| ((lc $cmd eq 'hue'
 		|| lc $cmd eq 'sat'
 		|| lc $cmd eq 'rgb'
 		|| lc $cmd eq 'color'
-		|| lc $cmd eq 'ct'
+		|| lc $cmd eq 'hsv'
 		|| lc $cmd eq 'start_cf'
 		|| lc $cmd eq 'stop_cf'
 		|| lc $cmd eq 'scene'
@@ -337,7 +355,10 @@ YeeLight_Set
 		|| lc $cmd eq 'blink')
 		&& (!defined($model)
 		|| $model eq "stripe"
-		|| $model eq "color")))
+		|| $model eq "color"))
+		|| (lc $cmd eq "active_mode"
+		&& (!defined($model)
+		|| $model eq "ceiling1" )))
 	{
 	    Log3 $name, 3, "YeeLight $name - set $name $cmd ".join(" ", @val);
 		return YeeLight_SelectSetCmd($hash, $cmd, @val);
@@ -829,7 +850,18 @@ YeeLight_SelectSetCmd
 		$sCmd->{'params'}->[0] = "circle";
 		$sCmd->{'params'}->[1] = "color";
 	}
-	
+
+	elsif (lc $cmd eq "active_mode")
+	{
+		return "usage: set $name $cmd mode [ramptime]" if ($cnt != 1) && ($cnt != 2);
+		my $sCmd;
+		$sCmd->{'method'} = "set_power";
+		$sCmd->{'params'}->[0]	= "on";
+		$sCmd->{'params'}->[2]	= $args[1] if (defined($args[1]));		# ramp time
+		$sCmd->{'params'}->[3]	= 1	if lc $args[0] eq "daylight";
+		$sCmd->{'params'}->[3]	= 5	if lc $args[0] eq "nightlight";
+		YeeLight_SendCmd($hash,$sCmd,$cmd,2);
+	}
 	else
 	{
 		return SetExtensions($hash, $list, $name, $cmd, @args);
@@ -872,14 +904,14 @@ YeeLight_SendCmd
 		$sCmd->{'params'}->[$rCnt - 1] = "smooth";						# flow
 		$sCmd->{'params'}->[$rCnt] = $defaultRamp + 0;					# force default ramp time to be int
 	}
-	elsif ($sCmd->{'method'} eq "set_ct_abx")
+	elsif ($sCmd->{'method'} eq "set_ct_abx" || $sCmd->{'method'} eq "active_mode")
 	{
 
 		$sCmd->{'params'}->[$rCnt - 1] = "sudden";						# no flow
 		$sCmd->{'params'}->[$rCnt] = 0;									# no flow
 	}
 	
-	YeeLight_IsOn($hash) if (lc $cmd ne "statusrequest") && (lc $cmd ne "on") && (lc $cmd ne "off") && (lc $cmd ne "toggle") && (lc $cmd ne "name");
+	YeeLight_IsOn($hash) if (lc $cmd ne "statusrequest") && (lc $cmd ne "on") && (lc $cmd ne "off") && (lc $cmd ne "toggle") && (lc $cmd ne "name") && (lc $cmd ne "active_mode");
 	
 	$sCmd->{'id'}	= YeeLight_Bridge_GetID($hash);
 	my $send		= encode_json($sCmd);
@@ -903,7 +935,7 @@ YeeLight_StatusRequest
 	my ($hash)	= @_;
 	my $name	= $hash->{NAME};
 	my $msgID	= YeeLight_Bridge_GetID($hash);
-	my $send	= '{"id":'.$msgID.',"method":"get_prop","params":["power","bright","ct","rgb","hue","sat","color_mode","flowing","delayoff","flow_params","music_on","name"]}';
+	my $send	= '{"id":'.$msgID.',"method":"get_prop","params":["power","bright","ct","rgb","hue","sat","color_mode","flowing","delayoff","flow_params","music_on","name", "active_mode", "nl_br"]}';
 	
 	DevIo_OpenDev($hash, 0,, sub(){ 
 		my ($hash, $err) = @_;
@@ -1122,6 +1154,7 @@ YeeLight_Parse
 	my $colormode	= undef;
 	my $colorflow	= undef;
 	my $musicmode	= undef;
+	my $activemode	= undef;
 	
 	if (defined($json->{'params'}->{'color_mode'}))
 	{
@@ -1138,6 +1171,11 @@ YeeLight_Parse
 	{
 		$musicmode	= "off"					if ($json->{'params'}->{'music_on'} eq 0);
 		$musicmode	= "on"					if ($json->{'params'}->{'music_on'} eq 1);
+	}
+	if (defined($json->{'params'}->{'active_mode'}))
+	{
+		$activemode = "daylight"			if ($json->{'params'}->{'active_mode'} eq 0);
+		$activemode = "nightlight"			if ($json->{'params'}->{'active_mode'} eq 1);
 	}
 	
 	readingsBeginUpdate($hash);
@@ -1156,6 +1194,8 @@ YeeLight_Parse
 		readingsBulkUpdate($hash,"flow_params",$json->{'params'}->{'flow_params'})	if defined($json->{'params'}->{'flow_params'});
 		readingsBulkUpdate($hash,"music_mode",$musicmode)							if defined($musicmode);
 		readingsBulkUpdate($hash,"name",$json->{'params'}->{'name'})				if defined($json->{'params'}->{'name'});
+		readingsBulkUpdate($hash,"active_mode", $activemode)						if defined($activemode);
+		readingsBulkUpdate($hash,"nl_br", $json->{'params'}->{'nl_br'})				if defined($json->{'params'}->{'nl_br'});
 	readingsEndUpdate($hash,1);
 	
 	Log3 $name, 3, "$name updated readings.";
@@ -1184,6 +1224,7 @@ YeeLight_ParseStatusRequest
 	my $colormode;
 	my $colorflow;
 	my $musicmode;
+	my $activemode;
 	$colormode	= "RGB"					if ($answer->{'result'}->[6] eq 1);
 	$colormode	= "color temperature"	if ($answer->{'result'}->[6] eq 2);
 	$colormode	= "HSV" 				if ($answer->{'result'}->[6] eq 3);
@@ -1191,6 +1232,8 @@ YeeLight_ParseStatusRequest
 	$colorflow	= "on"					if ($answer->{'result'}->[7] eq 1);
 	$musicmode	= "off"					if ($answer->{'result'}->[10] eq 0);
 	$musicmode	= "on"					if ($answer->{'result'}->[10] eq 1);
+	$activemode	= "daylight"			if ($answer->{'result'}->[12] eq 0);
+	$activemode = "nightlight"			if ($answer->{'result'}->[12] eq 1);
 	
 	if ($answer)
 	{
@@ -1210,6 +1253,8 @@ YeeLight_ParseStatusRequest
 			readingsBulkUpdate($hash,"flow_params",$answer->{'result'}->[9]);
 			readingsBulkUpdate($hash,"music_mode",$musicmode);
 			readingsBulkUpdate($hash,"name",$answer->{'result'}->[11]);
+			readingsBulkUpdate($hash,"active_mode", $activemode);
+			readingsBulkUpdate($hash,"nl_br", $answer->{'result'}->[13]);
 		readingsEndUpdate($hash,1);
 		
 		Log3 $name, 3, "$name full statusrequest";

@@ -1,4 +1,3 @@
-YeeLight last change:
-2017-08-02
- - bugfix: attr keepAlive couldn't be set to "0"
- - bugfix: reconnect to not reachable lamp blocked fhem
+YeeLight and more last change:
+2018-10-22
+ - Added support for ceiling light
