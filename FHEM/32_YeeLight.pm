@@ -620,6 +620,8 @@ YeeLight_SelectSetCmd
             && $args[0] ne "sunset"
             && $args[0] ne "sunrise"
             && $args[0] ne "happy_birthday"
+            && $args[0] ne "romance"
+            && $args[0] ne "candle"
             && $args[0] < 0
             && $args[0] > 9)
         {
@@ -627,23 +629,33 @@ YeeLight_SelectSetCmd
             $sceneList .= "sunrise ";
             $sceneList .= "sunset ";
             $sceneList .= "happy_birthday ";
+            $sceneList .= "romance ";
+            $sceneList .= "candle ";
             $sceneList .= "0-9 ";
             return "Unknown scene. Choose from: $sceneList";
         }
         
         my %scene;
-        $scene{sunset}{type}            = "start_cf";
-        $scene{sunset}{count}           = "3";
-        $scene{sunset}{action}          = "2";
-        $scene{sunset}{val}             = "50,2,2700,10,180000,2,1700,5,420000,1,16731136,1";
-        $scene{sunrise}{type}           = "start_cf";
-        $scene{sunrise}{count}          = "3";
-        $scene{sunrise}{action}         = "1";
-        $scene{sunrise}{val}            = "50,1,16731136,1,360000,2,1700,10,540000,2,2700,100";
-        $scene{happy_birthday}{type}    = "start_cf";
-        $scene{happy_birthday}{count}   = "0";
-        $scene{happy_birthday}{action}  = "1";
-        $scene{happy_birthday}{val}     = "2000,1,14438425,80,2000,1,14448670,80,2000,1,11153940,80";
+	$scene{sunset}{type}			= "start_cf";
+	$scene{sunset}{count}			= "3";
+	$scene{sunset}{action}			= "2";
+	$scene{sunset}{val}			= "50,2,2700,10,180000,2,1700,5,420000,1,16731136,1";
+	$scene{sunrise}{type}			= "start_cf";
+	$scene{sunrise}{count}			= "3";
+	$scene{sunrise}{action}			= "1";
+	$scene{sunrise}{val}			= "50,1,16731392,1,360000,2,1700,10,540000,2,2700,100";
+	$scene{happy_birthday}{type}		= "start_cf";
+	$scene{happy_birthday}{count}		= "0";
+	$scene{happy_birthday}{action}		= "1";
+	$scene{happy_birthday}{val}		= "1996,1,14438425,80,1996,1,14448670,80,1996,1,11153940,80";
+	$scene{romance}{type}			= "start_cf";
+	$scene{romance}{count}			= "0";
+	$scene{romance}{action}			= "1";
+	$scene{romance}{val}			= "4000,1,5838189,1,4000,1,6689834,1";
+	$scene{candle}{type}			= "start_cf";
+	$scene{candle}{count}			= "0";
+	$scene{candle}{action}			= "0";
+	$scene{candle}{val}			= "800,2,2700,50,800,2,2700,30,1200,2,2700,80,800,2,2700,60,1200,2,2700,90,2400,2,2700,50,1200,2,2700,80,800,2,2700,60,400,2,2700,70";
 
         my @newArgs;
         
