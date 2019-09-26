@@ -1472,7 +1472,8 @@ YeeLightBridge_Parse
         my $newName = "YeeLight_".$sHash->{"id"};
         $newName    = "YeeLight_".$sHash->{"name"} if ($sHash->{"name"});
         
-        return "UNDEFINED ".$newName." YeeLight ".$sHash->{"model"}." ".$host." ".$sHash->{"id"};
+#        return "UNDEFINED ".$newName." YeeLight ".$sHash->{"model"}." ".$host." ".$sHash->{"id"};
+        return "UNDEFINED ".$newName." YeeLight ".$host." ".$sHash->{"model"};
     }   
 }
 
