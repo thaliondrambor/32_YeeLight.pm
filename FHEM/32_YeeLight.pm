@@ -8,7 +8,6 @@
 
 # TODO
 # light functions: timer, schedules
-# scenes
 # software bridge (UDP): search request
 
 # help
@@ -42,6 +41,8 @@
 # 14 fixed some errors
 # 15 optional parameter for define: model
 # 16 fixed bugs blocking fhem when a lamp is not reachable, not able to set keepAlive to 0
+# 17 Fix devStateIcon
+# 18 Fix scenes
 
 # verbose level
 # 0: quit
@@ -150,7 +151,7 @@ YeeLight_Define
     
     my $model;
     $model = $hash->{MODEL} if defined($hash->{MODEL});
-    $attr{$name}{devStateIcon}  = '{my $power=ReadingsVal($name,"power","off");my $mode=ReadingsVal($name,"color_mode","RGB");if($power eq "off"){Color::devStateIcon($name,"rgb","rgb","power");}else{if($mode eq "RGB"){Color::devStateIcon($name,"rgb","rgb","bright");}elsif($mode eq "color temperature"){Color::devStateIcon($name,"rgb",undef,"bright");}}}' if (!defined($attr{$name}{devStateIcon}) && (!defined($model) || ($model eq "color") || ($model eq "stripe")));
+    $attr{$name}{devStateIcon}  = '{my $state=ReadingsVal($name,"state","disconnected");my $power=ReadingsVal($name,"power","off");my $mode=ReadingsVal($name,"color_mode","RGB");if($state eq "disconnected"){return ".*:light_exclamation:";}else{if($power eq "off"){Color::devStateIcon($name,"rgb","rgb","power");}else{if($mode eq "RGB"){Color::devStateIcon($name,"rgb","rgb","bright");}elsif($mode eq "color temperature"){Color::devStateIcon($name,"rgb",undef,"bright");}}}}' if (!defined($attr{$name}{devStateIcon}) && (!defined($model) || ($model eq "color") || ($model eq "stripe")));
     $attr{$name}{webCmd}        = 'rgb:bright:ct:rgb ffffff:rgb ff0000:rgb 00ff00:rgb 0000ff:on:off'                    if (!defined($attr{$name}{webCmd}) && (!defined($model) || ($model eq "color") || ($model eq "stripe")));
     $attr{$name}{widgetOverride}= 'bright:colorpicker,BRI,0,1,100 ct:colorpicker,CT,1700,10,6500 rgb:colorpicker,RGB'   if (!defined($attr{$name}{widgetOverride}) && (!defined($model) || ($model eq "color") || ($model eq "stripe")));
     $attr{$name}{devStateIcon}  = '{my $power=ReadingsVal($name,"power","off");if($power eq "off"){Color::devStateIcon($name,"dimmer",undef,"power");}else{Color::devStateIcon($name,"dimmer",undef,"bright")}}' if (!defined($attr{$name}{devStateIcon}) && defined($model) && ($model eq "mono" || $model eq "desklamp"));
